@@ -1,0 +1,37 @@
+{
+  "name": "infinite-rader",
+  "version": "1.0.0",
+  "description": "Infinite Flight Live API flight map",
+  "main": "dist/server.js",
+  "scripts": {
+    "build:server": "tsc -p tsconfig.server.json",
+    "build:client": "esbuild src/client/main.tsx --bundle --outfile=public/app.js --platform=browser --format=iife --jsx=automatic --sourcemap",
+    "build": "npm run build:client && npm run build:server",
+    "prestart": "npm run build",
+    "start": "node dist/server.js",
+    "dev": "npm run build:client && tsx src/server.ts"
+  },
+  "keywords": [
+    "infinite-flight",
+    "map",
+    "leaflet"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.3.4",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "esbuild": "^0.27.3",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

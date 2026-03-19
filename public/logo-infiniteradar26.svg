@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="220" height="58" viewBox="0 0 220 58" role="img" aria-labelledby="title desc">
+  <title id="title">InfiniteRadar26 logo</title>
+  <desc id="desc">InfiniteRadar26 with radar icon and live air traffic subtitle</desc>
+  <defs>
+    <style>
+      .ink { fill: #1e2229; }
+      .accent { fill: #f4c41f; }
+      .sub { fill: #1e2229; font: 700 9px 'IBM Plex Sans', 'Arial', sans-serif; letter-spacing: 0.12em; }
+      .word { fill: #1e2229; font: 800 36px 'Barlow Condensed', 'Arial', sans-serif; letter-spacing: 0.02em; }
+    </style>
+  </defs>
+
+  <g transform="translate(2 3)">
+    <g class="ink" transform="translate(0 2)">
+      <path d="M17 26a16 16 0 1 1 16-16h-6a10 10 0 1 0-10 10z"/>
+      <path d="M17 21a11 11 0 1 1 11-11h-6a5 5 0 1 0-5 5z"/>
+      <circle cx="17" cy="10" r="3.2"/>
+    </g>
+    <g class="ink" transform="translate(31 2)">
+      <path d="M17 26a16 16 0 1 1 16-16h-6a10 10 0 1 0-10 10z"/>
+      <path d="M17 21a11 11 0 1 1 11-11h-6a5 5 0 1 0-5 5z"/>
+      <circle cx="17" cy="10" r="3.2"/>
+    </g>
+  </g>
+
+  <text class="word" x="66" y="37">infInIteradar</text>
+  <text class="word accent" x="194" y="37">26</text>
+  <text class="sub" x="154" y="51">LIVE IT TRAFFIC</text>
+</svg>
