@@ -15,14 +15,17 @@ const API_KEY = process.env.INFINITE_FLIGHT_API_KEY;
 const PUBLIC_DIR = path_1.default.join(__dirname, '../public');
 const AIRPORTS_CACHE_TTL_MS = 10 * 60 * 1000;
 const AIRPORT_LAYOUT_CACHE_TTL_MS = 5 * 60 * 1000;
+const OVERPASS_TIMEOUT_MS = 7000;
 let airportsCache = null;
 const airportLayoutCache = new Map();
-if (!API_KEY) {
-    console.error('Missing INFINITE_FLIGHT_API_KEY in .env');
-    process.exit(1);
-}
 app.use(express_1.default.static(PUBLIC_DIR));
 async function requestInfiniteFlight(endpoint) {
+    if (!API_KEY) {
+        const error = new Error('Missing INFINITE_FLIGHT_API_KEY');
+        error.status = 500;
+        error.payload = { error: 'Missing INFINITE_FLIGHT_API_KEY environment variable' };
+        throw error;
+    }
     const response = await fetch(`${INFINITE_API_BASE}${endpoint}`, {
         headers: {
             Authorization: `Bearer ${API_KEY}`,
@@ -42,14 +45,23 @@ async function requestInfiniteFlight(endpoint) {
     return body;
 }
 async function requestOverpass(query) {
-    const response = await fetch(OVERPASS_API_URL, {
-        method: 'POST',
-        headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
-        },
-        body: new URLSearchParams({ data: query }).toString()
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), OVERPASS_TIMEOUT_MS);
+    let response;
+    try {
+        response = await fetch(OVERPASS_API_URL, {
+            method: 'POST',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
+            },
+            body: new URLSearchParams({ data: query }).toString(),
+            signal: controller.signal
+        });
+    }
+    finally {
+        clearTimeout(timeout);
+    }
     const contentType = response.headers.get('content-type') || '';
     const body = contentType.includes('application/json')
         ? await response.json()
@@ -184,13 +196,22 @@ app.get('/api/airport-layout', withErrorHandling(async (req, res) => {
     (._;>;);
     out body;
   `;
-    const raw = await requestOverpass(overpassQuery);
-    const simplified = simplifyOverpassAeroways(raw);
-    airportLayoutCache.set(cacheKey, {
-        payload: simplified,
-        expiresAt: Date.now() + AIRPORT_LAYOUT_CACHE_TTL_MS
-    });
-    res.json(simplified);
+    try {
+        const raw = await requestOverpass(overpassQuery);
+        const simplified = simplifyOverpassAeroways(raw);
+        airportLayoutCache.set(cacheKey, {
+            payload: simplified,
+            expiresAt: Date.now() + AIRPORT_LAYOUT_CACHE_TTL_MS
+        });
+        res.json(simplified);
+    }
+    catch (_error) {
+        if (cached) {
+            res.json(cached.payload);
+            return;
+        }
+        res.json({ features: [] });
+    }
 }));
 app.get('/api/flights', withErrorHandling(async (req, res) => {
     const sessionId = String(req.query.sessionId || '');
@@ -242,6 +263,9 @@ app.get('/api/flights/:flightId/flightplan', withErrorHandling(async (req, res) 
     const data = await requestInfiniteFlight(`/sessions/${encodeURIComponent(sessionId)}/flights/${encodeURIComponent(flightId)}/flightplan`);
     res.json(data);
 }));
-app.listen(PORT, () => {
-    console.log(`Infinite Radar running at http://localhost:${PORT}`);
-});
+if (!process.env.VERCEL) {
+    app.listen(PORT, () => {
+        console.log(`Infinite Radar running at http://localhost:${PORT}`);
+    });
+}
+exports.default = app;
