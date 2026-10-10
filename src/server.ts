@@ -445,6 +445,17 @@ app.get('/api/photos', route(async (req, res) => {
   return getPhotos(aircraft, livery).catch(() => ({ total: 0, photos: [] }));
 }));
 
+// 単一ページなので、知らないパスはトップへ戻す。
+// ifspotters.com 本体の /en・/ja 付き URL を radar 側で開いても 404 にしない
+app.use((req, res) => {
+  if (req.path.startsWith('/api/') || (req.method !== 'GET' && req.method !== 'HEAD')) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  const query = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
+  res.redirect(302, `/${query}`);
+});
+
 if (!process.env.VERCEL) {
   app.listen(PORT, () => {
     console.log(`Infinite Radar running at http://localhost:${PORT}`);
