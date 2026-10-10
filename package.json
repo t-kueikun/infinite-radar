@@ -4,32 +4,33 @@
   "description": "Infinite Flight Live API flight map",
   "main": "dist/server.js",
   "scripts": {
+    "build:client": "esbuild src/client/main.ts --bundle --outfile=public/app.js --platform=browser --format=iife --target=es2020 --minify --loader:.png=empty --legal-comments=none",
     "build:server": "tsc -p tsconfig.server.json",
-    "build:client": "esbuild src/client/main.tsx --bundle --outfile=public/app.js --platform=browser --format=iife --jsx=automatic --sourcemap",
     "build": "npm run build:client && npm run build:server",
+    "typecheck": "tsc -p tsconfig.client.json && tsc -p tsconfig.server.json --noEmit",
     "prestart": "npm run build",
     "start": "node dist/server.js",
-    "dev": "npm run build:client && tsx src/server.ts"
+    "dev": "npm run build:client -- --sourcemap && tsx watch src/server.ts"
   },
   "keywords": [
     "infinite-flight",
-    "map",
+    "flight-tracker",
     "leaflet"
   ],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "compression": "^1.8.2",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "leaflet": "^1.9.4"
   },
   "devDependencies": {
+    "@types/compression": "^1.8.1",
     "@types/express": "^5.0.6",
+    "@types/leaflet": "^1.9.22",
     "@types/node": "^25.3.4",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
     "esbuild": "^0.27.3",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"

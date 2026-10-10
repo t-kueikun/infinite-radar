@@ -1,53 +1,40 @@
-# Infinite Radar (Infinite Flight Live API)
+# Infinite Radar
 
-Infinite Flight Live API を使った、ReactベースのFR24ライクなリアルタイムフライトマップです。
+Infinite Flight Live API を使った軽量なライブフライトトラッカー。デザインは [design.md](design.md)（Flightradar24 の design.md 解析に準拠）。
 
 ## セットアップ
 
 ```bash
-cp .env.example .env.local
-# .env.local に INFINITE_FLIGHT_API_KEY を設定
+# .env.local
+INFINITE_FLIGHT_API_KEY=xxxx
+# 任意: 写真の照合先（既定 https://ifspotters.com）
+# IFSPOTTERS_BASE_URL=https://ifspotters.com
+
 npm install
-npm run dev
+npm run dev      # http://localhost:3000
+npm run build    # public/app.js と dist/server.js を生成
 ```
 
-起動後: [http://localhost:3000](http://localhost:3000)
+## 構成
 
-- 本番起動: `npm run start`（`prestart` でTypeScriptをビルド）
+| ファイル | 役割 |
+|---|---|
+| `src/server.ts` | Express。API キーを秘匿したプロキシ、短命キャッシュ、フライト一覧の圧縮、IFSpotters 照合 |
+| `src/client/main.ts` | 地図（Leaflet）、ポーリング、選択・追従、検索 |
+| `src/client/aircraft-layer.ts` | 全機体を 1 枚の canvas に描画するレイヤー（当たり判定込み） |
+| `src/client/panel.ts` | フライト詳細パネル（写真・ルート・統計・高度プロファイル） |
+| `src/client/data.ts` | API 型、デッドレコニング、距離計算、フォーマット |
 
-## 実装内容
+## API
 
-- `express` サーバーで API キーを秘匿してプロキシ
-- `React + Leaflet` ベースのフライトマップ（FR24風レイアウト + 右サイドパネル）
-- セッション選択 (`/sessions`)
-- フライト一覧ポーリング (`/sessions/{sessionId}/flights`)
-- 選択機体のルート描画 (`/sessions/{sessionId}/flights/{flightId}/route`)
-- 15分無操作で更新停止し、ユーザー操作で再開
-- 高負荷対策として `canvas circleMarker` 描画を採用
+- `GET /api/sessions` — サーバー一覧
+- `GET /api/flights?sessionId=` — 全機体（列を絞った配列形式。`types` に機種/リバリー名を重複排除）
+- `GET /api/flights/:id?sessionId=` — 飛行計画・出発/到着空港・航跡
+- `GET /api/photos?aircraft=&livery=` — IFSpotters の承認済み写真（機種名 + リバリー名の完全一致）
 
-## API 参照（指定リンク）
+## 軽量化のポイント
 
-- Infinite Flight Live API Overview:
-  - https://infiniteflight.com/guide/developer-reference/live-api/overview
-- Infinite Flight Community / API カテゴリ:
-  - https://community.infiniteflight.com/c/thirdparty/api/40
-
-今回の実装で反映した仕様（抜粋）:
-
-- 認証ヘッダー: `Authorization: Bearer <apikey>`
-  - 出典: Live API Overview
-- セッションの注意点: "The Sessions endpoint currently has a timeout of 15 minutes if no API calls are made."
-  - 出典: Live API docs (`/sessions`)
-
-## 主要ファイル
-
-- `src/server.ts`: APIプロキシ + 静的配信
-- `public/index.html`: Reactマウント用の最小エントリ
-- `public/styles.css`: FR24風スタイル
-- `src/client/main.tsx`: React UI、セッション読込、ポーリング、地図描画、検索、アイドル停止制御
-- `public/app.js`: 上記TSから生成されるクライアントJS
-
-## 補足
-
-FR24「完全コピー」ではなく、機能・情報設計を寄せたUIです（ロゴや固有アセットは未使用）。
-# infinite-radar
+- フライト一覧: Expert 約 4,500 機で生 JSON 2.3MB → gzip 約 240KB（列の削減・UUID の短縮・名前の重複排除）
+- クライアント JS: 1.3MB（MapLibre + React）→ 173KB / gzip 52KB（Leaflet + 素の TypeScript）
+- DOM マーカーを使わず canvas 1 枚に描画。ポーリング間は速度と針路で位置を補間
+- タブ非表示中はポーリング停止。上流 API への同時リクエストはサーバー側で 1 本にまとめる

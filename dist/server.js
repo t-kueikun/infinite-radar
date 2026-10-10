@@ -5,263 +5,331 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const path_1 = __importDefault(require("path"));
 const express_1 = __importDefault(require("express"));
+const compression_1 = __importDefault(require("compression"));
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config({ path: ['.env.local', '.env'] });
 const app = (0, express_1.default)();
 const PORT = Number(process.env.PORT || 3000);
-const INFINITE_API_BASE = 'https://api.infiniteflight.com/public/v2';
-const OVERPASS_API_URL = 'https://overpass-api.de/api/interpreter';
+const IF_API_BASE = 'https://api.infiniteflight.com/public/v2';
+const IFSPOTTERS_BASE = (process.env.IFSPOTTERS_BASE_URL || 'https://ifspotters.com').replace(/\/$/, '');
 const API_KEY = process.env.INFINITE_FLIGHT_API_KEY;
 const PUBLIC_DIR = path_1.default.join(__dirname, '../public');
-const AIRPORTS_CACHE_TTL_MS = 10 * 60 * 1000;
-const AIRPORT_LAYOUT_CACHE_TTL_MS = 5 * 60 * 1000;
-const OVERPASS_TIMEOUT_MS = 7000;
-let airportsCache = null;
-const airportLayoutCache = new Map();
-app.use(express_1.default.static(PUBLIC_DIR));
-async function requestInfiniteFlight(endpoint) {
-    if (!API_KEY) {
-        const error = new Error('Missing INFINITE_FLIGHT_API_KEY');
-        error.status = 500;
-        error.payload = { error: 'Missing INFINITE_FLIGHT_API_KEY environment variable' };
-        throw error;
-    }
-    const response = await fetch(`${INFINITE_API_BASE}${endpoint}`, {
-        headers: {
-            Authorization: `Bearer ${API_KEY}`,
-            Accept: 'application/json'
-        }
-    });
-    const contentType = response.headers.get('content-type') || '';
-    const body = contentType.includes('application/json')
-        ? await response.json()
-        : { error: await response.text() };
-    if (!response.ok) {
-        const error = new Error('Infinite Flight API request failed');
-        error.status = response.status;
-        error.payload = body;
-        throw error;
-    }
-    return body;
+const SECOND = 1000;
+const MINUTE = 60 * SECOND;
+const TTL = {
+    sessions: 5 * MINUTE,
+    flights: 10 * SECOND,
+    liveries: 6 * 60 * MINUTE,
+    flightDetail: 30 * SECOND,
+    airport: 24 * 60 * MINUTE,
+    airports: 6 * 60 * MINUTE,
+    photos: 10 * MINUTE,
+    world: 30 * SECOND
+};
+function httpError(status, message) {
+    const error = new Error(message);
+    error.status = status;
+    return error;
 }
-async function requestOverpass(query) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), OVERPASS_TIMEOUT_MS);
-    let response;
-    try {
-        response = await fetch(OVERPASS_API_URL, {
-            method: 'POST',
-            headers: {
-                Accept: 'application/json',
-                'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
-            },
-            body: new URLSearchParams({ data: query }).toString(),
-            signal: controller.signal
+const cache = new Map();
+const CACHE_MAX_ENTRIES = 2000;
+async function cached(key, ttlMs, load) {
+    const now = Date.now();
+    const entry = cache.get(key);
+    if (entry?.value !== undefined && now < entry.expiresAt)
+        return entry.value;
+    if (entry?.pending)
+        return entry.pending;
+    const pending = load()
+        .then((value) => {
+        cache.set(key, { value, expiresAt: Date.now() + ttlMs });
+        return value;
+    })
+        .catch((error) => {
+        // 上流が落ちていても直前の値があればそれを返す
+        if (entry?.value !== undefined) {
+            cache.set(key, { value: entry.value, expiresAt: Date.now() + 5 * SECOND });
+            return entry.value;
+        }
+        cache.delete(key);
+        throw error;
+    });
+    cache.set(key, { ...entry, expiresAt: entry?.expiresAt ?? 0, pending });
+    if (cache.size > CACHE_MAX_ENTRIES) {
+        for (const [k, v] of cache) {
+            if (!v.pending && v.expiresAt < now)
+                cache.delete(k);
+        }
+    }
+    return pending;
+}
+async function ifApi(endpoint) {
+    if (!API_KEY)
+        throw httpError(500, 'INFINITE_FLIGHT_API_KEY is not set');
+    const response = await fetch(`${IF_API_BASE}${endpoint}`, {
+        headers: { Authorization: `Bearer ${API_KEY}`, Accept: 'application/json' }
+    });
+    if (!response.ok)
+        throw httpError(response.status, `Infinite Flight API ${endpoint} -> HTTP ${response.status}`);
+    const body = (await response.json());
+    if (body.errorCode !== 0)
+        throw httpError(502, `Infinite Flight API ${endpoint} -> errorCode ${body.errorCode}`);
+    return body.result;
+}
+/** UUID(36 文字) ⇄ base64url(22 文字)。フライト一覧で最もかさむ列を縮める。 */
+function packId(uuid) {
+    const hex = uuid.replace(/-/g, '');
+    return /^[0-9a-f]{32}$/i.test(hex) ? Buffer.from(hex, 'hex').toString('base64url') : uuid;
+}
+function unpackId(id) {
+    if (!/^[A-Za-z0-9_-]{22}$/.test(id))
+        return id;
+    const hex = Buffer.from(id, 'base64url').toString('hex');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+function round(value, digits) {
+    const p = 10 ** digits;
+    return Math.round(value * p) / p;
+}
+async function getLiveries() {
+    return cached('liveries', TTL.liveries, async () => {
+        const list = await ifApi('/aircraft/liveries');
+        return new Map(list.map((l) => [l.id, l]));
+    });
+}
+async function getSessions() {
+    return cached('sessions', TTL.sessions, async () => {
+        const sessions = await ifApi('/sessions');
+        return sessions
+            .map((s) => ({ id: s.id, name: s.name, users: s.userCount, worldType: s.worldType }))
+            .sort((a, b) => a.worldType - b.worldType);
+    });
+}
+/**
+ * フライト一覧をコンパクトな配列形式に変換する。
+ * 生の JSON は Expert で 2MB 超になるので、必要な列だけを固定順の配列で返し、
+ * 機種/リバリー名は types テーブルに重複排除して添字で参照させる。
+ *
+ * f[i] = [flightId, callsign, username, lat, lon, altFt, gsKt, track, vsFpm, typeIndex, va, lastReportEpochSec]
+ * types[j] = [aircraftName, liveryName]
+ */
+async function getCompactFlights(sessionId) {
+    return cached(`flights:${sessionId}`, TTL.flights, async () => {
+        const [flights, liveries] = await Promise.all([
+            ifApi(`/sessions/${encodeURIComponent(sessionId)}/flights`),
+            getLiveries().catch(() => new Map())
+        ]);
+        const types = [];
+        const typeIndex = new Map();
+        const rows = flights.map((f) => {
+            let idx = typeIndex.get(f.liveryId);
+            if (idx === undefined) {
+                const livery = liveries.get(f.liveryId);
+                idx = types.length;
+                types.push([livery?.aircraftName ?? '', livery?.liveryName ?? '']);
+                typeIndex.set(f.liveryId, idx);
+            }
+            return [
+                packId(f.flightId),
+                f.callsign || '',
+                f.username || '',
+                round(f.latitude, 4),
+                round(f.longitude, 4),
+                Math.round(f.altitude),
+                Math.round(f.speed),
+                Math.round(f.speed > 1 ? f.track : f.heading),
+                Math.round(f.verticalSpeed),
+                idx,
+                f.virtualOrganization || '',
+                Math.round(Date.parse(f.lastReport) / 1000) || 0
+            ];
         });
-    }
-    finally {
-        clearTimeout(timeout);
-    }
-    const contentType = response.headers.get('content-type') || '';
-    const body = contentType.includes('application/json')
-        ? await response.json()
-        : { error: await response.text() };
-    if (!response.ok) {
-        const error = new Error('Overpass request failed');
-        error.status = response.status;
-        error.payload = body;
-        throw error;
-    }
-    return body;
-}
-function roundCoord(value, precision = 3) {
-    const power = 10 ** precision;
-    return Math.round(value * power) / power;
-}
-function buildAirportLayoutKey(south, west, north, east) {
-    return [south, west, north, east].map((value) => roundCoord(value, 2)).join(':');
-}
-function normalizeBbox(input) {
-    const parts = input.split(',').map((part) => Number(part));
-    if (parts.length !== 4 || parts.some((value) => !Number.isFinite(value))) {
-        return null;
-    }
-    const [south, west, north, east] = parts;
-    if (south < -90 || north > 90 || west < -180 || east > 180 || south >= north || west >= east) {
-        return null;
-    }
-    return [south, west, north, east];
-}
-function simplifyOverpassAeroways(payload) {
-    if (!payload || typeof payload !== 'object') {
-        return { features: [] };
-    }
-    const source = payload;
-    const elements = Array.isArray(source.elements) ? source.elements : [];
-    const nodeMap = new Map();
-    for (const element of elements) {
-        if (element.type === 'node' &&
-            typeof element.id === 'number' &&
-            typeof element.lat === 'number' &&
-            typeof element.lon === 'number') {
-            nodeMap.set(element.id, [element.lat, element.lon]);
-        }
-    }
-    const features = elements.flatMap((element) => {
-        if (element.type !== 'way') {
-            return [];
-        }
-        const tags = (element.tags && typeof element.tags === 'object') ? element.tags : {};
-        const kind = typeof tags.aeroway === 'string' ? tags.aeroway : '';
-        if (!kind) {
-            return [];
-        }
-        const refs = Array.isArray(element.nodes) ? element.nodes : [];
-        const coordinates = refs
-            .map((ref) => (typeof ref === 'number' ? nodeMap.get(ref) : null))
-            .filter((coord) => Array.isArray(coord));
-        if (coordinates.length < 2) {
-            return [];
-        }
-        const first = coordinates[0];
-        const last = coordinates[coordinates.length - 1];
-        const closed = first[0] === last[0] && first[1] === last[1];
-        return [{
-                kind,
-                closed,
-                coordinates
-            }];
+        return { t: Date.now(), types, f: rows };
     });
-    return { features };
 }
-function withErrorHandling(handler) {
+/** 入れ子になった飛行計画を [名前, lat, lon] の平らな列にする。 */
+function flattenPlan(items, out = []) {
+    for (const item of items) {
+        const loc = item.location;
+        if (loc && (loc.latitude !== 0 || loc.longitude !== 0)) {
+            out.push([item.identifier || item.name, round(loc.latitude, 4), round(loc.longitude, 4)]);
+        }
+        if (item.children?.length)
+            flattenPlan(item.children, out);
+    }
+    return out;
+}
+function isAirportCode(code) {
+    return !!code && /^[A-Z0-9]{3,4}$/.test(code);
+}
+async function getAirport(icao) {
+    return cached(`airport:${icao}`, TTL.airport, async () => {
+        const a = await ifApi(`/airport/${encodeURIComponent(icao)}`);
+        return { icao: a.icao, iata: a.iata, name: a.name, city: a.city, country: a.country?.isoCode ?? null };
+    }).catch(() => ({ icao, iata: null, name: '', city: null, country: null }));
+}
+/**
+ * 空港の規模を 0〜3 で見積もる。IF の class は規模と一致しない（EDDM が 1 など）ので、
+ * 周波数の数とボーディングブリッジの有無から判断する。
+ */
+function airportTier(a) {
+    const freqs = a.frequenciesCount ?? 0;
+    if (a.hasJetbridges && freqs >= 10)
+        return 3;
+    if (a.hasJetbridges || (a.iata && freqs >= 5))
+        return 2;
+    if (a.iata)
+        return 1;
+    return 0;
+}
+/** 地図のピン用の空港一覧。a[i] = [icao, iata, name, lat, lon, tier] */
+async function getAirportPins() {
+    return cached('airports', TTL.airports, async () => {
+        const list = await ifApi('/airports');
+        return {
+            a: list
+                .filter((a) => Number.isFinite(a.latitude) && Number.isFinite(a.longitude))
+                .map((a) => [a.icao, a.iata || '', a.name, round(a.latitude, 4), round(a.longitude, 4), airportTier(a)])
+        };
+    });
+}
+async function getFlightDetail(sessionId, flightId) {
+    return cached(`detail:${sessionId}:${flightId}`, TTL.flightDetail, async () => {
+        const base = `/sessions/${encodeURIComponent(sessionId)}/flights/${encodeURIComponent(flightId)}`;
+        const [plan, route] = await Promise.all([
+            ifApi(`${base}/flightplan`).catch(() => null),
+            ifApi(`${base}/route`).catch(() => [])
+        ]);
+        const planPoints = plan ? flattenPlan(plan.flightPlanItems || []) : [];
+        const waypoints = plan?.waypoints ?? [];
+        const originCode = waypoints[0];
+        const destCode = waypoints[waypoints.length - 1];
+        const [origin, destination] = await Promise.all([
+            isAirportCode(originCode) ? getAirport(originCode) : null,
+            isAirportCode(destCode) && destCode !== originCode ? getAirport(destCode) : null
+        ]);
+        // 飛行軌跡は [lat, lon, altFt, epochSec]。間引いて最大 600 点に抑える
+        const step = Math.max(1, Math.ceil(route.length / 600));
+        const track = route
+            .filter((_, i) => i % step === 0 || i === route.length - 1)
+            .map((p) => [round(p.latitude, 4), round(p.longitude, 4), Math.round(p.altitude), Math.round(Date.parse(p.date) / 1000)]);
+        return { plan: planPoints, origin, destination, track };
+    });
+}
+async function getWorld(sessionId) {
+    return cached(`world:${sessionId}`, TTL.world, async () => {
+        const base = `/sessions/${encodeURIComponent(sessionId)}`;
+        const [atc, world] = await Promise.all([
+            ifApi(`${base}/atc`),
+            ifApi(`${base}/world`).catch(() => [])
+        ]);
+        // traffic[icao] = [到着予定数, 出発数]。便 ID の一覧は空港フィルター用にサーバー側だけで持つ
+        const traffic = {};
+        const routes = new Map();
+        for (const s of world) {
+            if (!s.inboundFlightsCount && !s.outboundFlightsCount)
+                continue;
+            traffic[s.airportIcao] = [s.inboundFlightsCount, s.outboundFlightsCount];
+            routes.set(s.airportIcao, { inbound: s.inboundFlights.map(packId), outbound: s.outboundFlights.map(packId) });
+        }
+        return {
+            // atc[i] = [airportIcao（センターは ""）, 種別, 管制官, lat, lon, 開始 epochSec]
+            atc: atc.map((a) => [
+                a.airportName || '',
+                a.type,
+                a.username || '',
+                round(a.latitude, 4),
+                round(a.longitude, 4),
+                Math.round(Date.parse(a.startTime.replace(' ', 'T')) / 1000) || 0
+            ]),
+            traffic,
+            routes
+        };
+    });
+}
+async function getPhotos(aircraft, livery) {
+    const key = `photos:${aircraft.toLowerCase()}|${livery.toLowerCase()}`;
+    return cached(key, TTL.photos, async () => {
+        const url = new URL('/api/photos', IFSPOTTERS_BASE);
+        url.searchParams.set('aircraft', aircraft);
+        url.searchParams.set('airline', livery);
+        url.searchParams.set('sort', 'views');
+        const response = await fetch(url, { signal: AbortSignal.timeout(6000) });
+        if (!response.ok)
+            throw httpError(502, `IFSpotters -> HTTP ${response.status}`);
+        const body = (await response.json());
+        return {
+            total: body.total,
+            photos: body.photos.slice(0, 8).map((p) => ({
+                id: p.id,
+                thumb: `${IFSPOTTERS_BASE}/api/img/${p.thumbKey}`,
+                page: `${IFSPOTTERS_BASE}/photos/${p.id}`,
+                photographer: p.photographer,
+                airport: p.airport,
+                category: p.category
+            }))
+        };
+    });
+}
+// ---------------------------------------------------------------------------
+// ルーティング
+// ---------------------------------------------------------------------------
+function route(handler) {
     return async (req, res) => {
         try {
-            await handler(req, res);
+            res.json(await handler(req, res));
         }
         catch (error) {
-            const apiError = error;
-            const status = apiError.status || 500;
-            const payload = apiError.payload || { error: apiError.message };
-            res.status(status).json({
-                ok: false,
-                status,
-                endpoint: req.originalUrl,
-                ...((typeof payload === 'object' && payload !== null) ? payload : { error: String(payload) })
-            });
+            const e = error;
+            res.status(e.status && e.status >= 400 ? e.status : 500).json({ error: e.message });
         }
     };
 }
+function requireParam(req, name) {
+    const value = String(req.query[name] ?? req.params[name] ?? '').trim();
+    if (!value)
+        throw httpError(400, `Missing parameter: ${name}`);
+    return value;
+}
+app.use((0, compression_1.default)());
+app.use(express_1.default.static(PUBLIC_DIR, { maxAge: '5m' }));
 app.get('/health', (_req, res) => {
     res.json({ ok: true });
 });
-app.get('/api/sessions', withErrorHandling(async (_req, res) => {
-    const data = await requestInfiniteFlight('/sessions');
-    res.json(data);
+app.get('/api/sessions', route(async (_req, res) => {
+    res.set('Cache-Control', 'public, max-age=60');
+    return getSessions();
 }));
-app.get('/api/airports', withErrorHandling(async (_req, res) => {
-    if (airportsCache && Date.now() < airportsCache.expiresAt) {
-        res.json(airportsCache.payload);
-        return;
-    }
-    const data = await requestInfiniteFlight('/airports');
-    airportsCache = {
-        payload: data,
-        expiresAt: Date.now() + AIRPORTS_CACHE_TTL_MS
-    };
-    res.json(data);
+app.get('/api/airports', route(async (_req, res) => {
+    res.set('Cache-Control', 'public, max-age=3600, s-maxage=21600');
+    return getAirportPins();
 }));
-app.get('/api/airport-layout', withErrorHandling(async (req, res) => {
-    const bboxRaw = String(req.query.bbox || '');
-    const bbox = normalizeBbox(bboxRaw);
-    if (!bbox) {
-        res.status(400).json({
-            ok: false,
-            error: 'Invalid required query parameter: bbox'
-        });
-        return;
-    }
-    const [south, west, north, east] = bbox;
-    const cacheKey = buildAirportLayoutKey(south, west, north, east);
-    const cached = airportLayoutCache.get(cacheKey);
-    if (cached && Date.now() < cached.expiresAt) {
-        res.json(cached.payload);
-        return;
-    }
-    const overpassQuery = `
-    [out:json][timeout:20];
-    (
-      way["aeroway"~"runway|taxiway|apron|helipad|taxilane"](${south},${west},${north},${east});
-    );
-    (._;>;);
-    out body;
-  `;
-    try {
-        const raw = await requestOverpass(overpassQuery);
-        const simplified = simplifyOverpassAeroways(raw);
-        airportLayoutCache.set(cacheKey, {
-            payload: simplified,
-            expiresAt: Date.now() + AIRPORT_LAYOUT_CACHE_TTL_MS
-        });
-        res.json(simplified);
-    }
-    catch (_error) {
-        if (cached) {
-            res.json(cached.payload);
-            return;
-        }
-        res.json({ features: [] });
-    }
+app.get('/api/flights', route(async (req, res) => {
+    res.set('Cache-Control', 'public, max-age=5, s-maxage=10, stale-while-revalidate=10');
+    return getCompactFlights(requireParam(req, 'sessionId'));
 }));
-app.get('/api/flights', withErrorHandling(async (req, res) => {
-    const sessionId = String(req.query.sessionId || '');
-    if (!sessionId) {
-        res.status(400).json({
-            ok: false,
-            error: 'Missing required query parameter: sessionId'
-        });
-        return;
-    }
-    const data = await requestInfiniteFlight(`/sessions/${encodeURIComponent(sessionId)}/flights`);
-    res.json(data);
+app.get('/api/flights/:flightId', route(async (req, res) => {
+    res.set('Cache-Control', 'public, max-age=15, s-maxage=30');
+    return getFlightDetail(requireParam(req, 'sessionId'), unpackId(requireParam(req, 'flightId')));
 }));
-app.get('/api/atc', withErrorHandling(async (req, res) => {
-    const sessionId = String(req.query.sessionId || '');
-    if (!sessionId) {
-        res.status(400).json({
-            ok: false,
-            error: 'Missing required query parameter: sessionId'
-        });
-        return;
-    }
-    const data = await requestInfiniteFlight(`/sessions/${encodeURIComponent(sessionId)}/atc`);
-    res.json(data);
+app.get('/api/world', route(async (req, res) => {
+    res.set('Cache-Control', 'public, max-age=15, s-maxage=30');
+    const { atc, traffic } = await getWorld(requireParam(req, 'sessionId'));
+    return { atc, traffic };
 }));
-app.get('/api/flights/:flightId/route', withErrorHandling(async (req, res) => {
-    const sessionId = String(req.query.sessionId || '');
-    const flightId = String(req.params.flightId || '');
-    if (!sessionId) {
-        res.status(400).json({
-            ok: false,
-            error: 'Missing required query parameter: sessionId'
-        });
-        return;
-    }
-    const data = await requestInfiniteFlight(`/sessions/${encodeURIComponent(sessionId)}/flights/${encodeURIComponent(flightId)}/route`);
-    res.json(data);
+app.get('/api/airport-flights', route(async (req, res) => {
+    res.set('Cache-Control', 'public, max-age=15, s-maxage=30');
+    const { routes } = await getWorld(requireParam(req, 'sessionId'));
+    const r = routes.get(requireParam(req, 'icao').toUpperCase());
+    return { inbound: r?.inbound ?? [], outbound: r?.outbound ?? [] };
 }));
-app.get('/api/flights/:flightId/flightplan', withErrorHandling(async (req, res) => {
-    const sessionId = String(req.query.sessionId || '');
-    const flightId = String(req.params.flightId || '');
-    if (!sessionId) {
-        res.status(400).json({
-            ok: false,
-            error: 'Missing required query parameter: sessionId'
-        });
-        return;
-    }
-    const data = await requestInfiniteFlight(`/sessions/${encodeURIComponent(sessionId)}/flights/${encodeURIComponent(flightId)}/flightplan`);
-    res.json(data);
+app.get('/api/photos', route(async (req, res) => {
+    const aircraft = requireParam(req, 'aircraft');
+    const livery = String(req.query.livery || '').trim();
+    if (!livery)
+        return { total: 0, photos: [] };
+    res.set('Cache-Control', 'public, max-age=300, s-maxage=600');
+    return getPhotos(aircraft, livery).catch(() => ({ total: 0, photos: [] }));
 }));
 if (!process.env.VERCEL) {
     app.listen(PORT, () => {

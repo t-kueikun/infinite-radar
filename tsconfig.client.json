@@ -2,10 +2,14 @@
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "module": "ES2020",
-    "lib": ["DOM", "ES2022"],
+    "lib": [
+      "DOM",
+      "ES2022"
+    ],
     "rootDir": "src/client",
-    "jsx": "react-jsx",
     "noEmit": true
   },
-  "include": ["src/client/main.tsx"]
+  "include": [
+    "src/client/**/*.ts"
+  ]
 }
