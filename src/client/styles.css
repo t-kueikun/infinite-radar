@@ -822,33 +822,116 @@ a.my-flight.idle { cursor: pointer; color: var(--primary); }
 }
 
 @media (max-width: 640px) {
-  :root { --topbar-h: 104px; }
-  .topbar { flex-wrap: wrap; height: var(--topbar-h); align-content: center; row-gap: 8px; }
-  .search { order: 3; flex-basis: 100%; max-width: none; }
-  .servers { flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
-  .status { display: none; }
+  /*
+   * スマホ: 上部バーを 2 段のグリッドにする。
+   *   1 段目: ロゴ / サーバー（3 等分の切り替え。選択中が必ず見える）/ アカウント
+   *   2 段目: 検索 / 自分の便
+   * .me は display: contents にして、中のチップとアバターを別々の段に置く
+   */
+  :root { --topbar-h: calc(100px + env(safe-area-inset-top)); }
+  .topbar {
+    display: grid;
+    /* 3 列目は 2 段目の自分の便チップの幅の残り。1 段目ではサーバーがそこまで広がる */
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      'brand servers servers account'
+      'search search flight flight';
+    align-items: center;
+    gap: 8px;
+    height: var(--topbar-h);
+    padding: env(safe-area-inset-top) var(--space-sm) 0;
+  }
+  .brand { grid-area: brand; }
   .brand span { display: none; }
   .brand img { height: 24px; }
-  .my-flight { max-width: 130px; padding: 0 10px; }
+  .servers {
+    grid-area: servers;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--radius-full);
+    background: var(--surface-container);
+  }
+  .servers .chip {
+    display: block;
+    height: 30px;
+    line-height: 30px;
+    text-align: center;
+    white-space: nowrap;
+    min-width: 0;
+    justify-content: center;
+    padding: 0 4px;
+    border: 0;
+    background: transparent;
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .servers .chip .n { display: none; }
+  .servers .chip[aria-pressed='true'] { background: var(--secondary); }
+  .search { grid-area: search; max-width: none; min-width: 0; }
+  .search input { height: 40px; font-size: 16px; }
+  .status { display: none; }
+  .me { display: contents; }
+  .me .avatar, .me .signin { grid-area: account; justify-self: end; }
+  .me .signin { padding: 0 12px; }
+  .me .my-flight { grid-area: flight; max-width: 140px; height: 40px; padding: 0 12px; }
   .my-flight .where { display: none; }
-  .map-tools { right: var(--space-sm); }
-  .tool-btn { height: 36px; padding: 0 12px; }
-  .popover { left: var(--space-sm); right: var(--space-sm); width: auto; top: calc(var(--space-sm) + 44px); z-index: 1150; }
-  .chip { padding: 0 12px; }
+  /* 自分の便チップが無い（未ログイン・IFC 未設定）ときは検索を横いっぱいに */
+  .topbar:not(:has(.my-flight)) .search { grid-column: 1 / -1; }
+  .me-menu { top: calc(52px + env(safe-area-inset-top)); right: var(--space-sm); }
+
+  /* 地図の上のボタンはアイコンと数だけにして、地図を隠さない */
+  .map-tools { top: 8px; right: 8px; gap: 6px; }
+  .tool-btn { height: 36px; padding: 0 10px; gap: 6px; }
+  .tool-btn .txt { display: none; }
+  .tool-btn .count { min-width: 18px; height: 18px; font-size: 11px; }
+  .popover { left: 8px; right: 8px; width: auto; top: 52px; max-height: calc(100% - 60px); z-index: 1150; }
+  /* iOS は 16px 未満の入力欄にフォーカスすると画面を拡大してしまう */
+  .field input[type='search'] { font-size: 16px; height: 40px; }
+
   .panel {
     top: auto;
     left: 0;
     right: 0;
     bottom: 0;
     width: auto;
-    max-height: 62%;
+    max-height: 58%;
     z-index: 1100;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
     border-bottom: 0;
     animation-name: sheet-in;
     padding-bottom: env(safe-area-inset-bottom);
   }
+  .panel::before {
+    content: '';
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    width: 36px;
+    height: 4px;
+    margin-left: -18px;
+    border-radius: var(--radius-full);
+    background: var(--container-high, #3a3939);
+  }
+  .panel-head { padding: 14px var(--space-sm) 8px var(--space-md); }
+  .panel-head h2 { font-size: 18px; line-height: 24px; }
+  .panel-head .sub { font-size: 13px; }
+  /* 写真は横長にして、地図の見える範囲を残す */
+  .photo { aspect-ratio: 2 / 1; }
+  .photo .empty { gap: 2px; font-size: 13px; }
+  .photo .empty svg { width: 28px; height: 28px; }
+  .photo .empty .btn-sm { margin-top: 4px; }
+  .leaflet-bottom { margin-bottom: env(safe-area-inset-bottom); }
   @keyframes sheet-in { from { transform: translateY(24px); opacity: 0; } }
+}
+
+/* iPhone SE など幅の狭い端末: ロゴを IFS アイコンにして、サーバー名を切らずに出す */
+@media (max-width: 360px) {
+  .brand img { content: url('/icon.png'); width: 28px; height: 28px; }
+  .servers .chip { font-size: 12px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

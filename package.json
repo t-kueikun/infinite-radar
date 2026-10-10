@@ -4,7 +4,7 @@
   "description": "Infinite Flight Live API flight map",
   "main": "dist/server.js",
   "scripts": {
-    "build:client": "esbuild src/client/main.ts --bundle --outfile=public/app.js --platform=browser --format=iife --target=es2020 --minify --loader:.png=empty --legal-comments=none",
+    "build:client": "esbuild src/client/main.ts --bundle --outfile=public/app.js --platform=browser --format=iife --target=es2020 --minify --loader:.png=empty --external:/icon.png --legal-comments=none",
     "build:server": "tsc -p tsconfig.server.json",
     "build": "npm run build:client && npm run build:server",
     "typecheck": "tsc -p tsconfig.client.json && tsc -p tsconfig.server.json --noEmit",

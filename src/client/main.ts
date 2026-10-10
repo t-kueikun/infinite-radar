@@ -119,7 +119,18 @@ L.tileLayer(`${ESRI}/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`, {
   ...tileOptions,
   attribution: 'Tiles © <a href="https://www.esri.com/">Esri</a> — Esri, HERE, Garmin, © OpenStreetMap contributors'
 }).addTo(map);
-L.tileLayer(`${ESRI}/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`, tileOptions).addTo(map);
+// 地名レイヤーは少し薄くして、機体と空港のラベルを優先して読めるようにする
+L.tileLayer(`${ESRI}/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`, { ...tileOptions, opacity: 0.6 }).addTo(map);
+
+// 地図の大きさが後から変わったとき（CSS の適用が遅れた、iOS のアドレスバーが縮んだなど）に追従する。
+// Leaflet は window の resize しか見ていないので、要素そのものを監視する
+if ('ResizeObserver' in window) {
+  let resizeFrame = 0;
+  new ResizeObserver(() => {
+    cancelAnimationFrame(resizeFrame);
+    resizeFrame = requestAnimationFrame(() => map.invalidateSize({ pan: false }));
+  }).observe(map.getContainer());
+}
 
 const aircraft = new AircraftLayer().addTo(map);
 

@@ -104,6 +104,23 @@ function nearest<T>(hit: Hit<T>, x: number, y: number, radius: number): T | null
   return best;
 }
 
+/** 置いたラベルの矩形。重なるラベルは描かない（密集地で文字が潰れて読めなくなるのを防ぐ） */
+class LabelBoxes {
+  private boxes: number[] = [];
+  clear(): void {
+    this.boxes.length = 0;
+  }
+  /** 空いていれば確保して true、ほかのラベルと重なるなら false。 */
+  claim(x: number, y: number, w: number, h: number): boolean {
+    const b = this.boxes;
+    for (let i = 0; i < b.length; i += 4) {
+      if (x < b[i] + b[i + 2] && x + w > b[i] && y < b[i + 1] + b[i + 3] && y + h > b[i + 1]) return false;
+    }
+    b.push(x, y, w, h);
+    return true;
+  }
+}
+
 type MapInternals = L.Map & {
   _animatingZoom?: boolean;
   _getNewPixelOrigin(center: L.LatLng, zoom: number): L.Point;
@@ -130,6 +147,7 @@ export class AircraftLayer extends L.Layer {
   private planeHits = hitBuffer<Flight>();
   private airportHits = hitBuffer<AirportPin>();
   private frame = 0;
+  private labelBoxes = new LabelBoxes();
   private dpr = 1;
   private width = 0;
   private height = 0;
@@ -278,20 +296,6 @@ export class AircraftLayer extends L.Layer {
         if (zoom >= tier.labelZoom) labels.push([a.iata || a.icao, x, p.y]);
       }
     }
-    if (labels.length) {
-      ctx.font = '600 11px "Open Sans", system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
-      ctx.lineJoin = 'round';
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = COLORS.labelHalo;
-      ctx.fillStyle = COLORS.label;
-      for (const [text, x, y] of labels) {
-        ctx.strokeText(text, x, y + 3);
-        ctx.fillText(text, x, y + 3);
-      }
-    }
-
     // ---- ATC のある空港（全ズームで表示）。ラベルは機体に隠れないよう最後に描く ----
     const atcLabels: Array<[AtcStation, AirportPin, number, number]> = [];
     if (this.airportMode !== 'none') {
@@ -307,6 +311,27 @@ export class AircraftLayer extends L.Layer {
           pushHit(this.airportHits, a, x, p.y - s / 2);
           atcLabels.push([station, a, x, p.y]);
         }
+      }
+    }
+
+    this.labelBoxes.clear();
+    // ATC のラベルを先に場所取りし、空港コードはその隙間にだけ出す
+    const atcPlaced = this.layoutAtcLabels(atcLabels);
+    if (labels.length) {
+      ctx.font = '600 11px "Open Sans", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = COLORS.labelHalo;
+      ctx.fillStyle = COLORS.label;
+      // 大きい空港から場所を取る（一覧は小さい順に並んでいる）
+      for (let i = labels.length - 1; i >= 0; i--) {
+        const [text, x, y] = labels[i];
+        const w = ctx.measureText(text).width + 4;
+        if (!this.labelBoxes.claim(x - w / 2, y + 2, w, 14)) continue;
+        ctx.strokeText(text, x, y + 3);
+        ctx.fillText(text, x, y + 3);
       }
     }
 
@@ -343,7 +368,7 @@ export class AircraftLayer extends L.Layer {
       }
     }
 
-    if (atcLabels.length) this.drawAtcLabels(atcLabels);
+    if (atcPlaced.length) this.drawAtcLabels(atcPlaced);
 
     if (selected) {
       const s = size + 8;
@@ -358,6 +383,21 @@ export class AircraftLayer extends L.Layer {
       ctx.setTransform(cos, sin, -sin, cos, selected.x * dpr, selected.y * dpr);
       ctx.drawImage(this.sprites.selected, -s / 2, -s / 2, s, s);
     }
+  }
+
+  /** ATC ラベルの置き場所を確保し、ほかと重ならないものだけを返す（周波数が多い空港を優先）。 */
+  private layoutAtcLabels(labels: Array<[AtcStation, AirportPin, number, number]>): Array<[AtcStation, AirportPin, number, number]> {
+    const { ctx } = this;
+    ctx.font = '700 11px "Open Sans", system-ui, sans-serif';
+    const placed: Array<[AtcStation, AirportPin, number, number]> = [];
+    const ordered = [...labels].sort((a, b) => b[0].types.length - a[0].types.length);
+    for (const item of ordered) {
+      const [station, a, x, y] = item;
+      const letters = station.types.map((t) => ATC_TYPES[t]?.short ?? '?').join(' ');
+      const w = ctx.measureText(a.icao).width + 6 + ctx.measureText(letters).width + 14;
+      if (this.labelBoxes.claim(x - w / 2, y + 3, w, 18)) placed.push(item);
+    }
+    return placed;
   }
 
   /** 空港コードと管制中の周波数の頭文字（I G T など）を緑の枠のラベルで描く。 */
