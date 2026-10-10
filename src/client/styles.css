@@ -623,6 +623,8 @@ a.my-flight.idle { cursor: pointer; color: var(--primary); }
   border-bottom: 1px solid var(--outline-variant);
   overflow: hidden;
 }
+.photo-link { position: absolute; inset: 0; display: block; cursor: pointer; }
+.photo-link:hover img.loaded { opacity: 0.92; }
 .photo img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0; transition: opacity 200ms ease-in-out; }
 .photo img.loaded { opacity: 1; }
 .photo .credit {

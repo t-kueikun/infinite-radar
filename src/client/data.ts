@@ -190,21 +190,50 @@ export function fetchFlightDetail(sessionId: string, flightId: string, signal?: 
  * 便を選んだときは手元で引くだけにする（選ぶたびの問い合わせ待ちをなくす）。
  */
 let photoIndex: Promise<Record<string, Photo[]>> | null = null;
+let photoIndexAt = 0;
+const PHOTO_INDEX_MAX_AGE = 5 * 60_000;
 
-export function loadPhotoIndex(): Promise<Record<string, Photo[]>> {
-  photoIndex ??= getJson<Record<string, Photo[]>>('/api/photo-index').catch(() => {
-    photoIndex = null; // 次に必要になったときにもう一度試す
-    return {};
-  });
-  return photoIndex;
+/** 索引を返す。古くなったら（開きっぱなしのタブ向けに）取り直す。失敗したら null。 */
+export function loadPhotoIndex(): Promise<Record<string, Photo[]> | null> {
+  if (photoIndex && Date.now() - photoIndexAt > PHOTO_INDEX_MAX_AGE) photoIndex = null;
+  if (!photoIndex) {
+    photoIndexAt = Date.now();
+    photoIndex = getJson<Record<string, Photo[]>>('/api/photo-index');
+    photoIndex.catch(() => {
+      photoIndex = null; // 次に必要になったときにもう一度試す
+    });
+  }
+  return photoIndex.catch(() => null);
 }
 
-const photoKey = (aircraft: string, livery: string) => `${aircraft.toLowerCase()}|${livery.toLowerCase()}`;
+const norm = (v: string) => v.trim().replace(/\s+/g, ' ').toLowerCase();
+const photoKey = (aircraft: string, livery: string) => `${norm(aircraft)}|${norm(livery)}`;
+const lookups = new Map<string, Promise<PhotoResult>>();
 
+/**
+ * まず手元の索引を引き、無ければ IFSpotters に直接確かめる。
+ * 索引は数分おきにしか作り直さないので、投稿したばかりの写真はこの確認で拾う。
+ * 失敗した結果は覚えず、次に選んだときにもう一度確かめる。
+ */
 export async function fetchPhotos(aircraft: string, livery: string): Promise<PhotoResult> {
   if (!aircraft || !livery) return { total: 0, photos: [] };
-  const photos = (await loadPhotoIndex())[photoKey(aircraft, livery)] ?? [];
-  return { total: photos.length, photos };
+  const key = photoKey(aircraft, livery);
+  const hit = (await loadPhotoIndex())?.[key];
+  if (hit?.length) return { total: hit.length, photos: hit };
+
+  let pending = lookups.get(key);
+  if (!pending) {
+    pending = getJson<PhotoResult>(`/api/photos?aircraft=${encodeURIComponent(aircraft)}&livery=${encodeURIComponent(livery)}`);
+    lookups.set(key, pending);
+    pending.catch(() => lookups.delete(key));
+    // 「無し」の結果も 1 分で忘れる（その間に投稿されたら拾えるように）
+    window.setTimeout(() => lookups.delete(key), 60_000);
+  }
+  try {
+    return await pending;
+  } catch {
+    return { total: 0, photos: [] };
+  }
 }
 
 const preloaded = new Set<string>();
@@ -212,8 +241,8 @@ const preloaded = new Set<string>();
 /** 写真の 1 枚目を先読みしておく（ホバー時など。選んだ瞬間に表示できるように）。 */
 export function preloadPhoto(aircraft: string, livery: string): void {
   if (!photoIndex || !aircraft || !livery) return;
-  void photoIndex.then((index) => {
-    const url = index[photoKey(aircraft, livery)]?.[0]?.thumb;
+  void loadPhotoIndex().then((index) => {
+    const url = index?.[photoKey(aircraft, livery)]?.[0]?.thumb;
     if (!url || preloaded.has(url)) return;
     preloaded.add(url);
     const img = new Image();

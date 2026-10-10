@@ -24,6 +24,7 @@ const TTL = {
     airport: 24 * 60 * MINUTE,
     airports: 6 * 60 * MINUTE,
     photos: 10 * MINUTE,
+    photoLookup: MINUTE,
     pilot: 5 * MINUTE,
     pilotFlights: 2 * MINUTE,
     world: 30 * SECOND
@@ -318,7 +319,19 @@ async function getPilot(sessionId, flightId) {
 function optimizedThumb(thumbKey) {
     return `${IFSPOTTERS_BASE}/_next/image?url=${encodeURIComponent(`/api/img/${thumbKey}`)}&w=750&q=75`;
 }
-const photoKey = (aircraft, livery) => `${aircraft.toLowerCase()}|${livery.toLowerCase()}`;
+/** 照合用のキー。大文字小文字と余分な空白の違いは無視する */
+const norm = (v) => v.trim().replace(/\s+/g, ' ').toLowerCase();
+const photoKey = (aircraft, livery) => `${norm(aircraft)}|${norm(livery)}`;
+function toIndexed(p) {
+    return {
+        id: p.id,
+        thumb: optimizedThumb(p.thumbKey),
+        page: `${IFSPOTTERS_BASE}/photos/${p.id}`,
+        photographer: p.photographer,
+        airport: p.airport,
+        category: p.category
+    };
+}
 /**
  * IFSpotters の公開写真をまとめて取り、「機種|リバリー」ごとの索引にする。
  * 便を選ぶたびに IFSpotters へ問い合わせるとその分待たされるので、索引ごとブラウザへ渡す。
@@ -346,14 +359,7 @@ function loadPhotoIndex() {
             const list = (index[photoKey(p.aircraft, p.airline)] ??= []);
             if (list.length >= 8)
                 continue;
-            list.push({
-                id: p.id,
-                thumb: optimizedThumb(p.thumbKey),
-                page: `${IFSPOTTERS_BASE}/photos/${p.id}`,
-                photographer: p.photographer,
-                airport: p.airport,
-                category: p.category
-            });
+            list.push(toIndexed(p));
         }
         lastPhotoIndex = index;
         void warmThumbs(index);
@@ -387,10 +393,22 @@ async function warmThumbs(index) {
         }));
     }
 }
+/**
+ * 1 組み合わせだけを IFSpotters に直接問い合わせる。索引に無かったときの確認用
+ * （投稿直後の写真は索引の作り直しまで載らないため）。キャッシュは短くする。
+ */
 async function getPhotos(aircraft, livery) {
-    const index = await getPhotoIndex();
-    const photos = index[photoKey(aircraft, livery)] ?? [];
-    return { total: photos.length, photos };
+    return cached(`photos:${photoKey(aircraft, livery)}`, TTL.photoLookup, async () => {
+        const url = new URL('/api/photos', IFSPOTTERS_BASE);
+        url.searchParams.set('aircraft', aircraft);
+        url.searchParams.set('airline', livery);
+        url.searchParams.set('sort', 'views');
+        const response = await fetch(url, { signal: AbortSignal.timeout(6000) });
+        if (!response.ok)
+            throw httpError(502, `IFSpotters -> HTTP ${response.status}`);
+        const body = (await response.json());
+        return { total: body.total, photos: body.photos.slice(0, 8).map(toIndexed) };
+    });
 }
 // ---------------------------------------------------------------------------
 // ルーティング
@@ -453,16 +471,20 @@ app.get('/api/locate', route(async (req, res) => {
     return { flight: await locateUser(requireParam(req, 'username')) };
 }));
 app.get('/api/photo-index', route(async (_req, res) => {
-    res.set('Cache-Control', 'public, max-age=300, s-maxage=600, stale-while-revalidate=600');
-    return getPhotoIndex().catch(() => ({}));
+    // 失敗時は 502 を返す（空の索引を CDN に残すと、しばらく全機「No images」になる）
+    const index = await getPhotoIndex();
+    res.set('Cache-Control', 'public, max-age=120, s-maxage=120, stale-while-revalidate=600');
+    return index;
 }));
 app.get('/api/photos', route(async (req, res) => {
     const aircraft = requireParam(req, 'aircraft');
     const livery = String(req.query.livery || '').trim();
     if (!livery)
         return { total: 0, photos: [] };
-    res.set('Cache-Control', 'public, max-age=300, s-maxage=600');
-    return getPhotos(aircraft, livery).catch(() => ({ total: 0, photos: [] }));
+    // 投稿直後の写真を拾うための経路なので、キャッシュは短く、失敗は空として残さない
+    const result = await getPhotos(aircraft, livery);
+    res.set('Cache-Control', 'public, max-age=60, s-maxage=60');
+    return result;
 }));
 // 単一ページなので、知らないパスはトップへ戻す。
 // ifspotters.com 本体の /en・/ja 付き URL を radar 側で開いても 404 にしない

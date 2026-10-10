@@ -17,6 +17,17 @@ const UPLOAD_URL = 'https://ifspotters.com/upload';
 const IFC_PROFILE = 'https://community.infiniteflight.com/u/';
 const dateFmt = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
 
+/** IFSpotters の画像最適化 URL（/_next/image?url=...）から元のサムネイルの URL を取り出す。 */
+function originalThumb(url: string): string | null {
+  try {
+    const u = new URL(url);
+    const inner = u.pathname === '/_next/image' ? u.searchParams.get('url') : null;
+    return inner ? new URL(inner, u.origin).href : null;
+  } catch {
+    return null;
+  }
+}
+
 function esc(value: string): string {
   return value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
@@ -285,7 +296,9 @@ export class FlightPanel {
     const p = photos[this.photoIndex];
     const multi = photos.length > 1;
     el.innerHTML = `
-      <img src="${esc(p.thumb)}" alt="${esc(`${p.photographer} – ${p.category}`)}" decoding="async" fetchpriority="high" />
+      <a class="photo-link" href="${esc(p.page)}" target="_blank" rel="noopener" title="Open on IFSpotters">
+        <img src="${esc(p.thumb)}" alt="${esc(`${p.photographer} – ${p.category}`)}" decoding="async" fetchpriority="high" />
+      </a>
       <a class="credit" href="${esc(p.page)}" target="_blank" rel="noopener">© ${esc(p.photographer)}${p.airport ? ` · ${esc(p.airport)}` : ''}</a>
       ${multi ? `<button class="nav prev" data-action="prev" aria-label="Previous photo">${ICON.prev}</button>
       <button class="nav next" data-action="next" aria-label="Next photo">${ICON.next}</button>
@@ -294,6 +307,12 @@ export class FlightPanel {
     const img = el.querySelector('img')!;
     img.onload = () => img.classList.add('loaded');
     img.onerror = () => {
+      // 縮小版が取れなければ元のサムネイルで出し直す。それも駄目なときだけ外す
+      const original = originalThumb(p.thumb);
+      if (original && img.src !== original) {
+        img.src = original;
+        return;
+      }
       this.photos = this.photos.filter((x) => x !== p);
       this.showPhoto(this.photoIndex);
     };
