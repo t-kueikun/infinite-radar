@@ -1,4 +1,4 @@
-# Infinite Radar — design.md
+# IFSpotters Radar — design.md
 
 出典: https://www.sokosumi.com/tools/design-md/analysis/flightradar24 （Flightradar24 の design.md 解析）。
 トークンは `public/styles.css` の `:root` にそのまま定義している。**パレット外の色・独自の影・ハードコードした余白は使わない。**

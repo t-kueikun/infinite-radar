@@ -94,7 +94,9 @@ a:hover { text-decoration: underline; }
   white-space: nowrap;
 }
 .brand:hover { text-decoration: none; }
-.brand svg { color: var(--secondary); }
+/* ロゴは IFSpotters と共通（背景色込みの画像）。横に「Radar」を添えて区別する */
+.brand img { display: block; height: 30px; width: auto; border-radius: 3px; }
+.brand span { font-size: 17px; font-weight: 600; letter-spacing: 0.01em; color: var(--on-surface); }
 
 .servers { display: flex; gap: 8px; }
 
@@ -811,7 +813,8 @@ a.my-flight.idle { cursor: pointer; color: var(--primary); }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 900px) {
-  .brand span { display: none; }
+  .brand span { font-size: 15px; }
+  .brand img { height: 26px; }
   .topbar { gap: var(--space-sm); padding: 0 var(--space-sm); }
   .status .clock { display: none; }
 }
@@ -822,6 +825,8 @@ a.my-flight.idle { cursor: pointer; color: var(--primary); }
   .search { order: 3; flex-basis: 100%; max-width: none; }
   .servers { flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
   .status { display: none; }
+  .brand span { display: none; }
+  .brand img { height: 24px; }
   .my-flight { max-width: 130px; padding: 0 10px; }
   .my-flight .where { display: none; }
   .map-tools { right: var(--space-sm); }

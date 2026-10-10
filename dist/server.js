@@ -418,7 +418,7 @@ app.use((req, res) => {
 });
 if (!process.env.VERCEL) {
     app.listen(PORT, () => {
-        console.log(`Infinite Radar running at http://localhost:${PORT}`);
+        console.log(`IFSpotters Radar running at http://localhost:${PORT}`);
     });
 }
 exports.default = app;

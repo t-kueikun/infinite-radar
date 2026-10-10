@@ -1,4 +1,4 @@
-# Infinite Radar
+# IFSpotters Radar
 
 Infinite Flight Live API を使った軽量なライブフライトトラッカー。デザインは [design.md](design.md)（Flightradar24 の design.md 解析に準拠）。
 
