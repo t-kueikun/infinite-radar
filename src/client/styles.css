@@ -186,6 +186,85 @@ a:hover { text-decoration: underline; }
 }
 .clock { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
 
+/* ---------- Account (IFSpotters login) ---------- */
+.me { position: relative; display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.chip.signin { color: var(--on-surface); }
+.chip.signin:hover { text-decoration: none; }
+.my-flight {
+  height: 32px;
+  max-width: 260px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--secondary);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--on-surface);
+  font-size: 14px;
+  line-height: 20px;
+  white-space: nowrap;
+  transition: background var(--ease), color var(--ease);
+}
+.my-flight svg { color: var(--secondary); flex-shrink: 0; }
+.my-flight b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.my-flight .where { font-size: 12px; color: var(--on-surface-variant); font-variant-numeric: tabular-nums; }
+.my-flight:hover, .my-flight[aria-pressed='true'] { background: var(--secondary); color: var(--on-secondary); }
+.my-flight:hover svg, .my-flight[aria-pressed='true'] svg,
+.my-flight:hover .where, .my-flight[aria-pressed='true'] .where { color: var(--on-secondary); }
+.my-flight.idle { border-color: var(--outline-variant); color: var(--on-surface-variant); font-size: 12px; cursor: default; }
+a.my-flight.idle { cursor: pointer; color: var(--primary); }
+.avatar {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--outline-variant);
+  border-radius: 50%;
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+}
+.avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.avatar[aria-expanded='true'] { box-shadow: 0 0 0 3px rgba(100, 190, 241, 0.35); }
+.me-menu {
+  position: absolute;
+  top: 44px;
+  right: 0;
+  z-index: 1200;
+  min-width: 220px;
+  display: grid;
+  padding: var(--space-xs);
+  background: var(--surface-bright);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elevation-lg);
+}
+.me-menu .who { display: grid; padding: 8px var(--space-sm); border-bottom: 1px solid var(--outline-variant); margin-bottom: var(--space-xs); }
+.me-menu .who b { font-size: 14px; line-height: 20px; font-weight: 600; }
+.me-menu .who span { font-size: 12px; line-height: 16px; color: var(--on-surface-variant); }
+.me-menu a, .me-menu button {
+  display: block;
+  padding: 8px var(--space-sm);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--on-surface);
+  font-size: 14px;
+  line-height: 20px;
+  text-align: left;
+}
+.me-menu a:hover, .me-menu button:hover { background: var(--surface-container-high); text-decoration: none; }
+
+.locked { display: grid; justify-items: center; gap: var(--space-sm); padding: var(--space-sm) var(--space-md) var(--space-md); text-align: center; }
+.locked svg { color: var(--on-surface-variant); }
+.locked p { margin: 0; font-size: 14px; line-height: 20px; color: var(--on-surface-variant); }
+.locked p b { display: block; color: var(--on-surface); font-weight: 600; margin-bottom: var(--space-xs); }
+.locked .btn:hover { text-decoration: none; }
+
 /* ---------- Map ---------- */
 .stage { position: relative; height: calc(100% - var(--topbar-h)); }
 #map { position: absolute; inset: 0; background: var(--surface-dim); }
@@ -673,6 +752,8 @@ a:hover { text-decoration: underline; }
   .search { order: 3; flex-basis: 100%; max-width: none; }
   .servers { flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
   .status { display: none; }
+  .my-flight { max-width: 130px; padding: 0 10px; }
+  .my-flight .where { display: none; }
   .map-tools { right: var(--space-sm); }
   .tool-btn { height: 36px; padding: 0 12px; }
   .popover { left: var(--space-sm); right: var(--space-sm); width: auto; top: calc(var(--space-sm) + 44px); z-index: 1150; }

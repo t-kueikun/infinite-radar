@@ -2,25 +2,29 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import './styles.css';
 import { AircraftLayer } from './aircraft-layer';
+import { devSignIn, loadViewer, settingsUrl, signInUrl, signOut, type Viewer } from './auth';
 import {
   ATC_TYPES,
   fetchAirportFlights,
   fetchAirportPins,
   fetchFlightDetail,
   fetchFlights,
+  fetchLocate,
   fetchSessions,
   fetchWorld,
   fmt,
+  isOnGround,
   planProgress,
   unwrapLongitudes,
   type AirportPin,
   type AtcStation,
   type Flight,
   type FlightDetail,
+  type LocatedFlight,
   type Session,
   type WorldState
 } from './data';
-import { activeCount, createMatcher, FilterForm, loadFilters, saveFilters, type AirportFlights } from './filters';
+import { activeCount, createMatcher, DEFAULT_FILTERS, FilterForm, loadFilters, saveFilters, type AirportFlights } from './filters';
 import { FlightPanel } from './panel';
 
 const POLL_MS = 10_000;
@@ -45,7 +49,10 @@ const els = {
   filterPop: $('filter-pop'),
   atcBtn: $<HTMLButtonElement>('atc-btn'),
   atcCount: $('atc-count'),
-  atcPop: $('atc-pop')
+  atcPop: $('atc-pop'),
+  me: $('me'),
+  filterLocked: $('filter-locked'),
+  filterReset: $('filter-reset')
 };
 
 // ---------------------------------------------------------------------------
@@ -68,6 +75,10 @@ const state = {
   shown: 0,
   airportFlights: null as AirportFlights | null,
   world: null as WorldState | null,
+  /** IFSpotters（Clerk）のログイン。authReady になるまでは何も出さない */
+  viewer: null as Viewer | null,
+  authReady: false,
+  myFlight: null as LocatedFlight | null,
   worldAt: 0,
   pendingFlightFromUrl: new URL(location.href).searchParams.get('flight')
 };
@@ -209,6 +220,7 @@ function afterFlightsUpdate(): void {
     if (Date.now() - state.detailAt > DETAIL_REFRESH_MS) void loadDetail(f.id);
   }
   if (els.search.value.trim()) renderSearch();
+  if (state.myFlight) renderMe();
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -484,7 +496,8 @@ filterForm.write(state.filters);
 
 /** 絞り込みを地図に反映する。選択中の機体は条件に合わなくても出しておく。 */
 function applyFilters(): void {
-  const f = state.filters;
+  // フィルターはログインした人だけ。未ログインなら保存済みの条件も効かせない
+  const f = state.viewer ? state.filters : DEFAULT_FILTERS;
   const active = activeCount(f);
   const match = createMatcher(f, state.airportFlights);
   const visible = active ? state.flights.filter((flight) => flight.id === state.selectedId || match(flight)) : state.flights;
@@ -589,6 +602,10 @@ els.atcPop.addEventListener('click', (event) => {
   const target = event.target as HTMLElement;
   const filterBtn = target.closest<HTMLButtonElement>('.atc-filter');
   if (filterBtn) {
+    if (!state.viewer) {
+      openPopover('filter');
+      return;
+    }
     state.filters = { ...state.filters, airport: filterBtn.dataset.icao!, direction: 'both' };
     filterForm.write(state.filters);
     saveFilters(STORAGE_FILTERS, state.filters);
@@ -645,6 +662,135 @@ for (const [name, { btn, pop }] of Object.entries(pops) as Array<[PopName, (type
 window.setInterval(() => {
   if (!document.hidden && !els.atcPop.hidden) renderAtc();
 }, 30_000);
+
+// ---------------------------------------------------------------------------
+// ログイン（IFSpotters と共通）と自分の機体
+// ---------------------------------------------------------------------------
+
+const LOCATE_MS = 30_000;
+let meMenuOpen = false;
+
+function handleViewer(viewer: Viewer | null): void {
+  state.viewer = viewer;
+  state.authReady = true;
+  state.myFlight = null;
+  meMenuOpen = false;
+  renderMe();
+  renderFilterLock();
+  applyFilters();
+  void locateMe();
+}
+
+function renderFilterLock(): void {
+  const locked = !state.viewer;
+  els.filterLocked.hidden = !locked;
+  els.filterPop.querySelector('form')!.hidden = locked;
+  els.filterReset.hidden = locked;
+  $('filter-result').hidden = locked;
+  els.filterBtn.classList.toggle('locked', locked);
+}
+
+async function locateMe(): Promise<void> {
+  const name = state.viewer?.ifcUsername;
+  if (!name || document.hidden) return;
+  try {
+    const found = await fetchLocate(name);
+    if (name !== state.viewer?.ifcUsername) return;
+    state.myFlight = found;
+  } catch {
+    /* 次回に再試行 */
+  }
+  renderMe();
+}
+
+window.setInterval(() => void locateMe(), LOCATE_MS);
+
+function initial(name: string): string {
+  return escapeHtml((name.trim()[0] || '?').toUpperCase());
+}
+
+function renderMe(): void {
+  if (!state.authReady) return;
+  const v = state.viewer;
+  if (!v) {
+    els.me.innerHTML = '<a class="chip signin js-signin" href="#">Sign in</a>';
+    return;
+  }
+
+  const mine = state.myFlight;
+  let flight = '';
+  if (!v.ifcUsername) {
+    flight = `<a class="my-flight idle" href="${settingsUrl()}" target="_blank" rel="noopener">Set your IFC username</a>`;
+  } else if (mine) {
+    const live = mine.sessionId === state.sessionId ? state.byId.get(mine.flightId) : null;
+    const where = live ? (isOnGround(live) ? 'On ground' : `${fmt.alt(live.alt)} ft`) : mine.server;
+    const selected = state.selectedId === mine.flightId;
+    flight = `<button type="button" class="my-flight" id="my-flight" aria-pressed="${selected}" title="Go to my flight">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 2l1.8 6.6 7.2 3v2l-7.2-1.5-.7 4.8 2.2 1.9V20l-3.3-1.1L8.7 20v-1.2l2.2-1.9-.7-4.8L3 13.6v-2l7.2-3z" fill="currentColor"/></svg>
+      <b>${escapeHtml(mine.callsign || 'My flight')}</b><span class="where">${escapeHtml(where)}</span>
+    </button>`;
+  } else {
+    flight = '<span class="my-flight idle">Not flying</span>';
+  }
+
+  const avatar = v.imageUrl ? `<img src="${escapeHtml(v.imageUrl)}" alt="" width="32" height="32" />` : initial(v.displayName);
+  els.me.innerHTML = `${flight}
+    <button type="button" class="avatar" id="me-btn" aria-expanded="${meMenuOpen}" aria-label="Account">${avatar}</button>
+    <div class="me-menu" ${meMenuOpen ? '' : 'hidden'}>
+      <div class="who"><b>${escapeHtml(v.displayName)}</b>${v.ifcUsername ? `<span>IFC @${escapeHtml(v.ifcUsername)}</span>` : ''}</div>
+      <a href="${settingsUrl()}" target="_blank" rel="noopener">IFSpotters settings</a>
+      <button type="button" data-action="signout">Sign out</button>
+    </div>`;
+}
+
+/** 自分の便へ移動して追従する。別のサーバーなら切り替えてから選ぶ。 */
+function goToMyFlight(): void {
+  const mine = state.myFlight;
+  if (!mine) return;
+  closePopovers();
+  if (mine.sessionId !== state.sessionId) {
+    state.pendingFlightFromUrl = mine.flightId;
+    switchSession(mine.sessionId);
+    return;
+  }
+  select(mine.flightId, { fly: true });
+  setFollowing(true);
+  renderMe();
+}
+
+els.me.addEventListener('click', async (event) => {
+  const target = event.target as HTMLElement;
+  if (target.closest('#my-flight')) {
+    goToMyFlight();
+  } else if (target.closest('#me-btn')) {
+    meMenuOpen = !meMenuOpen;
+    renderMe();
+  } else if (target.closest('[data-action="signout"]')) {
+    await signOut();
+    handleViewer(null);
+  }
+});
+
+document.addEventListener('click', (event) => {
+  const target = event.target as HTMLElement;
+  const signin = target.closest<HTMLAnchorElement>('.js-signin');
+  if (signin) {
+    event.preventDefault();
+    // ログイン後に今見ている地図（サーバー・選択中の便）へ戻れるよう、押した時点の URL を渡す
+    const url = signInUrl();
+    if (url === '#dev-sign-in') {
+      if (devSignIn()) location.reload();
+    } else {
+      location.href = url;
+    }
+    return;
+  }
+  // 再描画でクリックした要素が DOM から外れていることがあるので、経路で判定する
+  if (meMenuOpen && !event.composedPath().includes(els.me)) {
+    meMenuOpen = false;
+    renderMe();
+  }
+});
 
 // ---------------------------------------------------------------------------
 // 検索
@@ -813,6 +959,12 @@ async function init(): Promise<void> {
   renderServers();
   syncUrl();
   void poll();
+
+  // ログイン確認は地図が出てから（clerk-js の読み込みで初回表示を遅らせない）
+  renderFilterLock();
+  window.setTimeout(() => {
+    loadViewer(handleViewer).then(handleViewer, () => handleViewer(null));
+  }, 300);
 
   // セッションの人数表示は数分おきに更新すれば十分
   window.setInterval(async () => {

@@ -134,6 +134,14 @@ export function fetchAirportFlights(sessionId: string, icao: string, signal?: Ab
   return getJson(`/api/airport-flights?sessionId=${encodeURIComponent(sessionId)}&icao=${encodeURIComponent(icao)}`, signal);
 }
 
+export type LocatedFlight = { sessionId: string; server: string; flightId: string; callsign: string };
+
+/** IFC ユーザー名から、いま飛んでいるサーバーと便を探す。 */
+export async function fetchLocate(username: string): Promise<LocatedFlight | null> {
+  const data = await getJson<{ flight: LocatedFlight | null }>(`/api/locate?username=${encodeURIComponent(username)}`);
+  return data.flight;
+}
+
 export function fetchFlightDetail(sessionId: string, flightId: string, signal?: AbortSignal): Promise<FlightDetail> {
   return getJson(`/api/flights/${encodeURIComponent(flightId)}?sessionId=${encodeURIComponent(sessionId)}`, signal);
 }

@@ -30,6 +30,7 @@
         <span class="badge" id="count">—</span>
         <span class="clock" id="clock">--:-- UTC</span>
       </div>
+      <div class="me" id="me"></div>
     </header>
 
     <main class="stage">
@@ -51,6 +52,11 @@
           <h3>Filters</h3>
           <button type="button" class="link-btn" id="filter-reset">Reset</button>
         </header>
+        <div class="locked" id="filter-locked" hidden>
+          <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3h1a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zm2 0h6V7a3 3 0 0 0-6 0z" fill="currentColor"/></svg>
+          <p><b>Sign in to use filters</b>Use your IFSpotters account. Your own flight will also appear in the top bar.</p>
+          <a class="btn btn-primary js-signin" href="#">Sign in with IFSpotters</a>
+        </div>
         <form class="filter-form" autocomplete="off">
           <div class="field">
             <div class="field-label">Show</div>

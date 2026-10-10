@@ -205,6 +205,20 @@ async function getCompactFlights(sessionId: string) {
   });
 }
 
+/** IFC ユーザー名で、いまどのサーバーを飛んでいるかを探す（ログイン中の「自分の機体」用）。 */
+async function locateUser(username: string) {
+  const name = username.toLowerCase();
+  const sessions = await getSessions();
+  const found = await Promise.all(
+    sessions.map(async (s) => {
+      const data = await getCompactFlights(s.id).catch(() => null);
+      const row = data?.f.find((r) => String(r[2]).toLowerCase() === name);
+      return row ? { sessionId: s.id, server: s.name, flightId: String(row[0]), callsign: String(row[1]) } : null;
+    })
+  );
+  return found.find((f) => f !== null) ?? null;
+}
+
 /** 入れ子になった飛行計画を [名前, lat, lon] の平らな列にする。 */
 function flattenPlan(items: RawPlanItem[], out: Array<[string, number, number]> = []) {
   for (const item of items) {
@@ -435,6 +449,11 @@ app.get('/api/airport-flights', route(async (req, res) => {
   const { routes } = await getWorld(requireParam(req, 'sessionId'));
   const r = routes.get(requireParam(req, 'icao').toUpperCase());
   return { inbound: r?.inbound ?? [], outbound: r?.outbound ?? [] };
+}));
+
+app.get('/api/locate', route(async (req, res) => {
+  res.set('Cache-Control', 'private, max-age=10');
+  return { flight: await locateUser(requireParam(req, 'username')) };
 }));
 
 app.get('/api/photos', route(async (req, res) => {
