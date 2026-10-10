@@ -15,7 +15,9 @@ import {
   fetchWorld,
   fmt,
   isOnGround,
+  loadPhotoIndex,
   planProgress,
+  preloadPhoto,
   unwrapLongitudes,
   type AirportPin,
   type AtcStation,
@@ -81,7 +83,9 @@ const state = {
   authReady: false,
   myFlight: null as LocatedFlight | null,
   worldAt: 0,
-  pendingFlightFromUrl: new URL(location.href).searchParams.get('flight')
+  pendingFlightFromUrl: new URL(location.href).searchParams.get('flight'),
+  /** ?q=（IFSpotters の写真ページなどから「この機体を探す」で来たとき）。最初のデータが届いたら検索する */
+  pendingQuery: new URL(location.href).searchParams.get('q')
 };
 
 // ---------------------------------------------------------------------------
@@ -199,6 +203,12 @@ async function poll(): Promise<void> {
 }
 
 function afterFlightsUpdate(): void {
+  if (state.pendingQuery) {
+    els.search.value = state.pendingQuery;
+    state.pendingQuery = null;
+    renderSearch();
+  }
+
   if (state.pendingFlightFromUrl) {
     const f = state.byId.get(state.pendingFlightFromUrl);
     state.pendingFlightFromUrl = null;
@@ -463,6 +473,7 @@ if (canHover) {
         hideTooltip();
         return;
       }
+      preloadPhoto(hit.aircraft, hit.livery);
       els.tooltip.innerHTML = `<b>${escapeHtml(hit.callsign || '—')}</b>${escapeHtml(hit.aircraft || '')} · ${fmt.alt(hit.alt)} ft · ${fmt.int(hit.gs)} kt`;
       els.tooltip.style.left = `${lastMouse.x + 14}px`;
       els.tooltip.style.top = `${lastMouse.y + 14}px`;
@@ -826,6 +837,7 @@ function renderSearch(): void {
     return;
   }
 
+  const words = q.split(/\s+/).filter(Boolean);
   const scored: Array<[number, Flight]> = [];
   for (const f of state.flights) {
     const cs = f.callsign.toLowerCase();
@@ -835,6 +847,11 @@ function renderSearch(): void {
     else if (cs.includes(q) || user.includes(q)) score = 1;
     else if (f.va.toLowerCase().includes(q)) score = 2;
     else if (f.aircraft.toLowerCase().includes(q) || f.livery.toLowerCase().includes(q)) score = 3;
+    // 「Boeing 787-9 Japan Airlines」のように複数語なら、全部がどこかの欄に含まれる便
+    else if (words.length > 1) {
+      const text = `${cs} ${user} ${f.aircraft} ${f.livery} ${f.va}`.toLowerCase();
+      if (words.every((w) => text.includes(w))) score = 4;
+    }
     if (score >= 0) scored.push([score, f]);
   }
   scored.sort((a, b) => a[0] - b[0] || a[1].callsign.localeCompare(b[1].callsign));
@@ -974,6 +991,9 @@ async function init(): Promise<void> {
   renderServers();
   syncUrl();
   void poll();
+
+  // 写真の索引も地図が出てから取る（便を選んだときに待たずに出せるように）
+  window.setTimeout(() => void loadPhotoIndex(), 500);
 
   // ログイン確認は地図が出てから（clerk-js の読み込みで初回表示を遅らせない）
   renderFilterLock();

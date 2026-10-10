@@ -185,18 +185,48 @@ export function fetchFlightDetail(sessionId: string, flightId: string, signal?: 
   return getJson(`/api/flights/${encodeURIComponent(flightId)}?sessionId=${encodeURIComponent(sessionId)}`, signal);
 }
 
-const photoCache = new Map<string, Promise<PhotoResult>>();
+/**
+ * IFSpotters の写真の索引（「機種|リバリー」→ 写真）。起動後に 1 回だけ取り、
+ * 便を選んだときは手元で引くだけにする（選ぶたびの問い合わせ待ちをなくす）。
+ */
+let photoIndex: Promise<Record<string, Photo[]>> | null = null;
 
-export function fetchPhotos(aircraft: string, livery: string): Promise<PhotoResult> {
-  if (!aircraft || !livery) return Promise.resolve({ total: 0, photos: [] });
-  const key = `${aircraft}|${livery}`;
-  let pending = photoCache.get(key);
-  if (!pending) {
-    pending = getJson<PhotoResult>(`/api/photos?aircraft=${encodeURIComponent(aircraft)}&livery=${encodeURIComponent(livery)}`)
-      .catch(() => ({ total: 0, photos: [] }));
-    photoCache.set(key, pending);
-  }
-  return pending;
+export function loadPhotoIndex(): Promise<Record<string, Photo[]>> {
+  photoIndex ??= getJson<Record<string, Photo[]>>('/api/photo-index').catch(() => {
+    photoIndex = null; // 次に必要になったときにもう一度試す
+    return {};
+  });
+  return photoIndex;
+}
+
+const photoKey = (aircraft: string, livery: string) => `${aircraft.toLowerCase()}|${livery.toLowerCase()}`;
+
+export async function fetchPhotos(aircraft: string, livery: string): Promise<PhotoResult> {
+  if (!aircraft || !livery) return { total: 0, photos: [] };
+  const photos = (await loadPhotoIndex())[photoKey(aircraft, livery)] ?? [];
+  return { total: photos.length, photos };
+}
+
+const preloaded = new Set<string>();
+
+/** 写真の 1 枚目を先読みしておく（ホバー時など。選んだ瞬間に表示できるように）。 */
+export function preloadPhoto(aircraft: string, livery: string): void {
+  if (!photoIndex || !aircraft || !livery) return;
+  void photoIndex.then((index) => {
+    const url = index[photoKey(aircraft, livery)]?.[0]?.thumb;
+    if (!url || preloaded.has(url)) return;
+    preloaded.add(url);
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = url;
+  });
+}
+
+export function preloadUrl(url: string): void {
+  if (preloaded.has(url)) return;
+  preloaded.add(url);
+  const img = new Image();
+  img.src = url;
 }
 
 // ---------------------------------------------------------------------------

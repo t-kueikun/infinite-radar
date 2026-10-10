@@ -314,29 +314,83 @@ async function getPilot(sessionId, flightId) {
         })
     };
 }
-async function getPhotos(aircraft, livery) {
-    const key = `photos:${aircraft.toLowerCase()}|${livery.toLowerCase()}`;
-    return cached(key, TTL.photos, async () => {
-        const url = new URL('/api/photos', IFSPOTTERS_BASE);
-        url.searchParams.set('aircraft', aircraft);
-        url.searchParams.set('airline', livery);
-        url.searchParams.set('sort', 'views');
-        const response = await fetch(url, { signal: AbortSignal.timeout(6000) });
-        if (!response.ok)
-            throw httpError(502, `IFSpotters -> HTTP ${response.status}`);
-        const body = (await response.json());
-        return {
-            total: body.total,
-            photos: body.photos.slice(0, 8).map((p) => ({
+/** IFSpotters の Next.js 画像最適化を通した URL。元のサムネ（1200px・約 180KB）が 750px の WebP/AVIF（約 16KB）になる */
+function optimizedThumb(thumbKey) {
+    return `${IFSPOTTERS_BASE}/_next/image?url=${encodeURIComponent(`/api/img/${thumbKey}`)}&w=750&q=75`;
+}
+const photoKey = (aircraft, livery) => `${aircraft.toLowerCase()}|${livery.toLowerCase()}`;
+/**
+ * IFSpotters の公開写真をまとめて取り、「機種|リバリー」ごとの索引にする。
+ * 便を選ぶたびに IFSpotters へ問い合わせるとその分待たされるので、索引ごとブラウザへ渡す。
+ * 写真が増えても重くなりすぎないよう、閲覧数順で最大 MAX_PAGES ページまで。
+ */
+const PHOTO_INDEX_MAX_PAGES = 20;
+async function fetchSpotterPage(page) {
+    const url = new URL('/api/photos', IFSPOTTERS_BASE);
+    url.searchParams.set('sort', 'views');
+    url.searchParams.set('page', String(page));
+    const response = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    if (!response.ok)
+        throw httpError(502, `IFSpotters -> HTTP ${response.status}`);
+    return (await response.json());
+}
+let lastPhotoIndex = null;
+function loadPhotoIndex() {
+    return cached('photoIndex', TTL.photos, async () => {
+        // 1 ページ目で総ページ数が分かるので、残りはまとめて並列に取る
+        const first = await fetchSpotterPage(1);
+        const pages = Math.min(PHOTO_INDEX_MAX_PAGES, first.pages ?? 1);
+        const rest = await Promise.all(Array.from({ length: pages - 1 }, (_, i) => fetchSpotterPage(i + 2)));
+        const index = {};
+        for (const p of [first, ...rest].flatMap((r) => r.photos)) {
+            const list = (index[photoKey(p.aircraft, p.airline)] ??= []);
+            if (list.length >= 8)
+                continue;
+            list.push({
                 id: p.id,
-                thumb: `${IFSPOTTERS_BASE}/api/img/${p.thumbKey}`,
+                thumb: optimizedThumb(p.thumbKey),
                 page: `${IFSPOTTERS_BASE}/photos/${p.id}`,
                 photographer: p.photographer,
                 airport: p.airport,
                 category: p.category
-            }))
-        };
+            });
+        }
+        lastPhotoIndex = index;
+        void warmThumbs(index);
+        return index;
     });
+}
+/** 一度作った索引があれば、期限切れでも待たせずにそれを返し、裏で作り直す。 */
+async function getPhotoIndex() {
+    const fresh = loadPhotoIndex();
+    if (lastPhotoIndex) {
+        fresh.catch(() => undefined);
+        return lastPhotoIndex;
+    }
+    return fresh;
+}
+/**
+ * 最適化画像は初回だけ生成に 1 秒ほどかかるので、各組み合わせの 1 枚目を先に作らせておく。
+ * ブラウザと同じ Accept を送り、同じ形式（AVIF）がキャッシュされるようにする。
+ */
+const warmed = new Set();
+async function warmThumbs(index) {
+    const urls = Object.values(index)
+        .map((list) => list[0]?.thumb)
+        .filter((u) => !!u && !warmed.has(u));
+    for (let i = 0; i < urls.length; i += 4) {
+        await Promise.all(urls.slice(i, i + 4).map(async (u) => {
+            warmed.add(u);
+            await fetch(u, { headers: { Accept: 'image/avif,image/webp,*/*' }, signal: AbortSignal.timeout(10_000) })
+                .then((r) => r.arrayBuffer())
+                .catch(() => warmed.delete(u));
+        }));
+    }
+}
+async function getPhotos(aircraft, livery) {
+    const index = await getPhotoIndex();
+    const photos = index[photoKey(aircraft, livery)] ?? [];
+    return { total: photos.length, photos };
 }
 // ---------------------------------------------------------------------------
 // ルーティング
@@ -397,6 +451,10 @@ app.get('/api/pilot', route(async (req, res) => {
 app.get('/api/locate', route(async (req, res) => {
     res.set('Cache-Control', 'private, max-age=10');
     return { flight: await locateUser(requireParam(req, 'username')) };
+}));
+app.get('/api/photo-index', route(async (_req, res) => {
+    res.set('Cache-Control', 'public, max-age=300, s-maxage=600, stale-while-revalidate=600');
+    return getPhotoIndex().catch(() => ({}));
 }));
 app.get('/api/photos', route(async (req, res) => {
     const aircraft = requireParam(req, 'aircraft');

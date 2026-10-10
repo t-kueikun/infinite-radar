@@ -1,4 +1,4 @@
-import { fetchPhotos, fmt, phaseOf, planProgress, type Flight, type FlightDetail, type Photo, type Pilot } from './data';
+import { fetchPhotos, fmt, phaseOf, planProgress, preloadUrl, type Flight, type FlightDetail, type Photo, type Pilot } from './data';
 
 /** フライト詳細パネル。骨組みは選択時に 1 回だけ作り、以降は数値部分だけを書き換える。 */
 
@@ -285,7 +285,7 @@ export class FlightPanel {
     const p = photos[this.photoIndex];
     const multi = photos.length > 1;
     el.innerHTML = `
-      <img src="${esc(p.thumb)}" alt="${esc(`${p.photographer} – ${p.category}`)}" decoding="async" />
+      <img src="${esc(p.thumb)}" alt="${esc(`${p.photographer} – ${p.category}`)}" decoding="async" fetchpriority="high" />
       <a class="credit" href="${esc(p.page)}" target="_blank" rel="noopener">© ${esc(p.photographer)}${p.airport ? ` · ${esc(p.airport)}` : ''}</a>
       ${multi ? `<button class="nav prev" data-action="prev" aria-label="Previous photo">${ICON.prev}</button>
       <button class="nav next" data-action="next" aria-label="Next photo">${ICON.next}</button>
@@ -298,5 +298,7 @@ export class FlightPanel {
       this.showPhoto(this.photoIndex);
     };
     if (img.complete && img.naturalWidth) img.classList.add('loaded');
+    // 次の写真も先に読んでおき、送ったときにすぐ出す
+    if (multi) preloadUrl(photos[(this.photoIndex + 1) % photos.length].thumb);
   }
 }
