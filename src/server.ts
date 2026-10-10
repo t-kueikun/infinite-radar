@@ -22,6 +22,8 @@ const TTL = {
   airport: 24 * 60 * MINUTE,
   airports: 6 * 60 * MINUTE,
   photos: 10 * MINUTE,
+  pilot: 5 * MINUTE,
+  pilotFlights: 2 * MINUTE,
   world: 30 * SECOND
 };
 
@@ -72,11 +74,17 @@ async function cached<T>(key: string, ttlMs: number, load: () => Promise<T>): Pr
   return pending;
 }
 
-async function ifApi<T>(endpoint: string): Promise<T> {
+async function ifApi<T>(endpoint: string, payload?: unknown): Promise<T> {
   if (!API_KEY) throw httpError(500, 'INFINITE_FLIGHT_API_KEY is not set');
 
   const response = await fetch(`${IF_API_BASE}${endpoint}`, {
-    headers: { Authorization: `Bearer ${API_KEY}`, Accept: 'application/json' }
+    method: payload === undefined ? 'GET' : 'POST',
+    headers: {
+      Authorization: `Bearer ${API_KEY}`,
+      Accept: 'application/json',
+      ...(payload === undefined ? {} : { 'Content-Type': 'application/json' })
+    },
+    body: payload === undefined ? undefined : JSON.stringify(payload)
   });
   if (!response.ok) throw httpError(response.status, `Infinite Flight API ${endpoint} -> HTTP ${response.status}`);
 
@@ -92,6 +100,7 @@ async function ifApi<T>(endpoint: string): Promise<T> {
 type RawSession = { id: string; name: string; userCount: number; maxUsers: number; worldType: number };
 type RawFlight = {
   flightId: string;
+  userId: string;
   callsign: string;
   username: string | null;
   latitude: number;
@@ -168,12 +177,16 @@ async function getSessions() {
  * f[i] = [flightId, callsign, username, lat, lon, altFt, gsKt, track, vsFpm, typeIndex, va, lastReportEpochSec]
  * types[j] = [aircraftName, liveryName]
  */
+/** sessionId → (圧縮した flightId → userId)。パイロット情報の取得用で、クライアントには送らない */
+const flightUsers = new Map<string, Map<string, string>>();
+
 async function getCompactFlights(sessionId: string) {
   return cached(`flights:${sessionId}`, TTL.flights, async () => {
     const [flights, liveries] = await Promise.all([
       ifApi<RawFlight[]>(`/sessions/${encodeURIComponent(sessionId)}/flights`),
       getLiveries().catch(() => new Map<string, RawLivery>())
     ]);
+    flightUsers.set(sessionId, new Map(flights.map((f) => [packId(f.flightId), f.userId])));
 
     const types: Array<[string, string]> = [];
     const typeIndex = new Map<string, number>();
@@ -348,6 +361,84 @@ async function getWorld(sessionId: string) {
 }
 
 // ---------------------------------------------------------------------------
+// パイロットのプロフィールと過去のフライト（/users, /users/{id}/flights）
+// ---------------------------------------------------------------------------
+
+type RawUserStats = {
+  userId: string;
+  discourseUsername: string | null;
+  virtualOrganization: string | null;
+  grade: number;
+  xp: number;
+  flightTime: number;
+  landingCount: number;
+  onlineFlights: number;
+  violations: number;
+  atcOperations: number;
+};
+
+type RawUserFlight = {
+  created: string;
+  callsign: string;
+  server: string;
+  liveryId: string;
+  totalTime: number;
+  landingCount: number;
+  originAirport: string | null;
+  destinationAirport: string | null;
+  xp: number;
+  violations: unknown[];
+};
+
+async function getPilot(sessionId: string, flightId: string) {
+  if (!flightUsers.has(sessionId)) await getCompactFlights(sessionId);
+  const userId = flightUsers.get(sessionId)?.get(flightId);
+  if (!userId) throw httpError(404, 'Flight not found');
+
+  const [stats, flights, liveries] = await Promise.all([
+    cached(`pilot:${userId}`, TTL.pilot, async () => (await ifApi<RawUserStats[]>('/users', { userIds: [userId] }))[0] ?? null),
+    cached(`pilotFlights:${userId}`, TTL.pilotFlights, () =>
+      ifApi<{ data: RawUserFlight[] }>(`/users/${encodeURIComponent(userId)}/flights?page=1`).then((r) => r.data)
+    ).catch(() => [] as RawUserFlight[]),
+    getLiveries().catch(() => new Map<string, RawLivery>())
+  ]);
+
+  return {
+    profile: stats && {
+      ifc: stats.discourseUsername || '',
+      va: stats.virtualOrganization || '',
+      grade: stats.grade,
+      xp: stats.xp,
+      flightMinutes: Math.round(stats.flightTime),
+      landings: stats.landingCount,
+      onlineFlights: stats.onlineFlights,
+      violations: stats.violations,
+      atcOperations: stats.atcOperations
+    },
+    // history[i] = [開始 epochSec, callsign, server, 出発, 到着, 機種, リバリー, 飛行分, 着陸数, XP, 違反数]
+    history: [...flights]
+      .sort((a, b) => Date.parse(b.created) - Date.parse(a.created))
+      .slice(0, 10)
+      .map((f) => {
+      const livery = liveries.get(f.liveryId);
+      return [
+        Math.round(Date.parse(f.created) / 1000) || 0,
+        f.callsign || '',
+        f.server || '',
+        f.originAirport || '',
+        f.destinationAirport || '',
+        livery?.aircraftName ?? '',
+        livery?.liveryName ?? '',
+        Math.round(f.totalTime),
+        f.landingCount,
+        f.xp,
+        f.violations?.length ?? 0
+      ];
+      })
+  };
+}
+
+// ---------------------------------------------------------------------------
 // IFSpotters の写真照合（公開 API 経由。機種名とリバリー名の完全一致）
 // ---------------------------------------------------------------------------
 
@@ -449,6 +540,11 @@ app.get('/api/airport-flights', route(async (req, res) => {
   const { routes } = await getWorld(requireParam(req, 'sessionId'));
   const r = routes.get(requireParam(req, 'icao').toUpperCase());
   return { inbound: r?.inbound ?? [], outbound: r?.outbound ?? [] };
+}));
+
+app.get('/api/pilot', route(async (req, res) => {
+  res.set('Cache-Control', 'public, max-age=60, s-maxage=120');
+  return getPilot(requireParam(req, 'sessionId'), requireParam(req, 'flightId'));
 }));
 
 app.get('/api/locate', route(async (req, res) => {

@@ -10,6 +10,7 @@ import {
   fetchFlightDetail,
   fetchFlights,
   fetchLocate,
+  fetchPilot,
   fetchSessions,
   fetchWorld,
   fmt,
@@ -259,6 +260,20 @@ function select(id: string | null, options: { fly?: boolean } = {}): void {
   if (options.fly) flyToSelected();
   syncUrl();
   void loadDetail(id);
+  void loadPilot(id);
+}
+
+let pilotAbort: AbortController | null = null;
+
+async function loadPilot(id: string): Promise<void> {
+  pilotAbort?.abort();
+  const controller = new AbortController();
+  pilotAbort = controller;
+  try {
+    panel.setPilot(id, await fetchPilot(state.sessionId, id, controller.signal));
+  } catch (error) {
+    if ((error as Error).name !== 'AbortError') panel.setPilot(id, null);
+  }
 }
 
 async function loadDetail(id: string): Promise<void> {

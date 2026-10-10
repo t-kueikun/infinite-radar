@@ -134,6 +134,45 @@ export function fetchAirportFlights(sessionId: string, icao: string, signal?: Ab
   return getJson(`/api/airport-flights?sessionId=${encodeURIComponent(sessionId)}&icao=${encodeURIComponent(icao)}`, signal);
 }
 
+export type PilotProfile = {
+  ifc: string;
+  va: string;
+  grade: number;
+  xp: number;
+  flightMinutes: number;
+  landings: number;
+  onlineFlights: number;
+  violations: number;
+  atcOperations: number;
+};
+export type PastFlight = {
+  start: number;
+  callsign: string;
+  server: string;
+  origin: string;
+  destination: string;
+  aircraft: string;
+  livery: string;
+  minutes: number;
+  landings: number;
+  xp: number;
+  violations: number;
+};
+export type Pilot = { profile: PilotProfile | null; history: PastFlight[] };
+
+export async function fetchPilot(sessionId: string, flightId: string, signal?: AbortSignal): Promise<Pilot> {
+  const data = await getJson<{ profile: PilotProfile | null; history: Array<[number, string, string, string, string, string, string, number, number, number, number]> }>(
+    `/api/pilot?sessionId=${encodeURIComponent(sessionId)}&flightId=${encodeURIComponent(flightId)}`,
+    signal
+  );
+  return {
+    profile: data.profile,
+    history: data.history.map(([start, callsign, server, origin, destination, aircraft, livery, minutes, landings, xp, violations]) => ({
+      start, callsign, server, origin, destination, aircraft, livery, minutes, landings, xp, violations
+    }))
+  };
+}
+
 export type LocatedFlight = { sessionId: string; server: string; flightId: string; callsign: string };
 
 /** IFC ユーザー名から、いま飛んでいるサーバーと便を探す。 */

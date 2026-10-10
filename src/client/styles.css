@@ -734,6 +734,76 @@ a.my-flight.idle { cursor: pointer; color: var(--primary); }
 .btn-tertiary { border: 1px solid var(--primary); background: transparent; color: var(--primary); }
 .btn-tertiary:hover { background: var(--primary-container); }
 
+.btn-sm { height: 32px; padding: 4px 14px; font-size: 13px; margin-top: 8px; }
+.btn-sm:hover { text-decoration: none; }
+
+/* ---------- Pilot (profile + recent flights) ---------- */
+.pilot { margin: var(--space-md) var(--space-md) 0; padding-top: var(--space-sm); border-top: 1px solid var(--outline-variant); }
+.section-k, .history-k {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--on-surface-variant);
+  margin-bottom: 8px;
+}
+.history-k { margin: var(--space-sm) 0 var(--space-xs); }
+.pilot-head { display: flex; align-items: center; gap: var(--space-sm); }
+.pilot-avatar {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+  font-weight: 600;
+}
+.pilot-name { flex: 1; min-width: 0; }
+.pilot-name b { font-size: 16px; line-height: 24px; font-weight: 600; }
+.pilot-name .sub { font-size: 12px; line-height: 16px; color: var(--on-surface-variant); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.grade {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 8px;
+  border-radius: var(--radius-full);
+  background: var(--surface-container-high);
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 700;
+  vertical-align: 2px;
+}
+.pilot-head .link-btn { font-size: 13px; white-space: nowrap; }
+.pilot-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  margin-top: var(--space-sm);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  background: var(--outline-variant);
+  overflow: hidden;
+}
+.pilot-stats > div { background: var(--surface-container-low); padding: 6px 8px; min-width: 0; }
+.pilot-stats .k { font-size: 11px; line-height: 16px; color: var(--on-surface-variant); white-space: nowrap; }
+.pilot-stats .v { font-size: 14px; line-height: 20px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pilot-stats .v small { font-size: 11px; font-weight: 500; color: var(--on-surface-variant); margin-left: 2px; }
+.history { list-style: none; margin: 0; padding: 0; }
+.history li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--outline-variant);
+}
+.history li:last-child { border-bottom: 0; }
+.h-route { font-size: 14px; line-height: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.h-when { font-size: 12px; line-height: 20px; color: var(--on-surface-variant); font-variant-numeric: tabular-nums; text-align: right; }
+.h-meta { font-size: 12px; line-height: 16px; color: var(--on-surface-variant); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.h-server { font-size: 12px; line-height: 16px; color: var(--on-surface-variant); text-align: right; white-space: nowrap; }
+
 .skeleton { background: linear-gradient(90deg, var(--surface-container-low), var(--surface-container-high), var(--surface-container-low)); background-size: 200% 100%; animation: shimmer 1.2s ease-in-out infinite; border-radius: var(--radius-sm); }
 @keyframes shimmer { to { background-position: -200% 0; } }
 
