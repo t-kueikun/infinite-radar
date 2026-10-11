@@ -156,10 +156,10 @@ const panel = new FlightPanel(els.panel, {
 });
 
 // ---------------------------------------------------------------------------
-// フライト統計（開いている間はライブの機体を隠し、飛んだ路線だけを地図に出す）
+// フライト統計（開いている間はライブの地図の上に地球儀を重ね、飛んだ路線を出す）
 // ---------------------------------------------------------------------------
 
-const stats = new StatsView(els.stats, map, {
+const stats = new StatsView(els.stats, $('globe'), {
   onClose: () => closeStats(),
   airport: (icao) => aircraft.airport(icao)
 });

@@ -699,6 +699,7 @@ function requireParam(req: Request, name: string): string {
 }
 
 app.use(compression());
+app.use('/vendor', express.static(path.join(PUBLIC_DIR, 'vendor'), { maxAge: '365d', immutable: true }));
 app.use(express.static(PUBLIC_DIR, { maxAge: '5m' }));
 
 app.get('/health', (_req, res) => {

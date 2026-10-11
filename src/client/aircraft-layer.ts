@@ -165,6 +165,9 @@ export class AircraftLayer extends L.Layer {
     pane.style.pointerEvents = 'none';
     this.canvas = L.DomUtil.create('canvas', 'aircraft-canvas leaflet-zoom-animated', pane);
     this.ctx = this.canvas.getContext('2d')!;
+    // 作り直した canvas は 300×150 で始まるので、前回の大きさを忘れて resize() に合わせ直させる
+    this.width = 0;
+    this.height = 0;
     map.on('move zoom resize viewreset moveend zoomend', this.redraw, this);
     map.on('zoomanim', this.animateZoom, this);
     this.redraw();

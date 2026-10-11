@@ -23,7 +23,8 @@ npm run build    # public/app.js と dist/server.js を生成
 | `src/client/main.ts` | 地図（Leaflet）、ポーリング、選択・追従、検索 |
 | `src/client/aircraft-layer.ts` | 全機体を 1 枚の canvas に描画するレイヤー（当たり判定込み） |
 | `src/client/panel.ts` | フライト詳細パネル（写真・ルート・統計・高度プロファイル） |
-| `src/client/stats.ts` | フライト統計（全履歴から空港・機種・航空会社・路線を集計し、路線を地図に描く） |
+| `src/client/stats.ts` | フライト統計（全履歴から空港・機種・航空会社・路線を集計） |
+| `src/client/globe.ts` | 統計の地球儀。MapLibre の globe 投影（`public/vendor` に置き、統計を開いたときだけ読み込む） |
 | `src/client/data.ts` | API 型、デッドレコニング、距離計算、フォーマット |
 
 ## API

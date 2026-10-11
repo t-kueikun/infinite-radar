@@ -43,6 +43,8 @@
       <!-- 位置とサイズは要素に直接書く。Leaflet は起動時に CSS を見て position を上書きするので、
            Safari で app.css の適用が app.js より遅れると高さ 0 の地図になる -->
       <div id="map" aria-label="Live map" style="position: absolute; inset: 0; width: 100%; height: 100%"></div>
+      <!-- maplibre-gl.css の .maplibregl-map { position: relative } に負けないよう、#map と同じく要素に直接書く -->
+      <div class="globe" id="globe" hidden aria-label="Routes flown" style="position: absolute; inset: 0; width: 100%; height: 100%"></div>
       <aside class="panel" id="panel" hidden aria-live="polite"></aside>
       <aside class="panel stats-panel" id="stats" hidden aria-label="Flight stats"></aside>
       <div class="map-tools">

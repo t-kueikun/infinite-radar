@@ -915,6 +915,37 @@ button.rank-row:hover .r-body b { color: var(--primary); }
 .st-foot { margin: var(--space-md) var(--space-md) 0; font-size: 12px; line-height: 16px; color: var(--on-surface-variant); }
 .st-open { margin-top: var(--space-sm); width: 100%; justify-content: center; gap: 6px; }
 
+/* ---------- Globe (flight stats) ---------- */
+.globe {
+  position: absolute;
+  inset: 0;
+  z-index: 790;
+  background: radial-gradient(circle at 60% 45%, #1d2230 0%, #0c0e14 55%, #060709 100%);
+}
+.globe[hidden] { display: none; }
+.globe.failed::after { content: 'Could not load the globe'; position: absolute; inset: 0; display: grid; place-items: center; color: var(--on-surface-variant); font-size: 14px; }
+.stats-open .leaflet-control-container { display: none; }
+.globe .maplibregl-ctrl-group { background: var(--chrome); border: 1px solid #000; border-radius: var(--radius-md); box-shadow: var(--elevation-md); }
+.globe .maplibregl-ctrl-group button + button { border-top-color: var(--outline-variant); }
+.globe .maplibregl-ctrl-group button .maplibregl-ctrl-icon { filter: invert(1); }
+.globe .maplibregl-ctrl.maplibregl-ctrl-attrib,
+.globe .maplibregl-ctrl.maplibregl-ctrl-attrib.maplibregl-compact { background: rgba(0, 0, 0, 0.55); color: var(--on-surface-variant); }
+.globe .maplibregl-ctrl-attrib a { color: var(--on-surface-variant); }
+.globe .maplibregl-ctrl-attrib-button { filter: invert(1); background-color: transparent; }
+.globe-pop .maplibregl-popup-content {
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  background: var(--chrome);
+  border: 1px solid #000;
+  color: var(--on-surface);
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  box-shadow: var(--elevation-md);
+}
+.globe-pop .maplibregl-popup-tip { display: none; }
+.globe-pop b { font-weight: 600; }
+
 /* ---------- Responsive ---------- */
 @media (max-width: 900px) {
   .brand span { font-size: 15px; }
@@ -1027,6 +1058,8 @@ button.rank-row:hover .r-body b { color: var(--primary); }
   .photo .empty svg { width: 28px; height: 28px; }
   .photo .empty .btn-sm { margin-top: 4px; }
   .leaflet-bottom { margin-bottom: env(safe-area-inset-bottom); }
+  /* 下はパネルで隠れるので、地図の出典は上に出す */
+  .globe .maplibregl-ctrl-bottom-right { top: 0; bottom: auto; }
   .stats-panel { width: auto; max-height: 60%; }
   .st-grid .v { font-size: 16px; line-height: 22px; }
   @keyframes sheet-in { from { transform: translateY(24px); opacity: 0; } }

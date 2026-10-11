@@ -1,12 +1,12 @@
-import L from 'leaflet';
 import { fetchHistoryPage, fmt, unwrapLongitudes, type AirportPin, type HistoryFlight, type PilotProfile } from './data';
+import { Globe, type GlobeAirport, type GlobeRoute, type Padding } from './globe';
 
 /**
  * フライト統計。Infinite Flight のフライト履歴を全ページ読み、よく使った空港・機種・
  * 航空会社・路線をブラウザで集計する（アプリ内では見られないので）。
  *
  * 履歴は 100 便ずつ届くので、届いた分から集計し直して表示を育てていく。
- * 地図には飛んだ路線を大圏で引き、回数が多いほど太く濃くする。
+ * 飛んだ路線は地球儀（globe.ts）に大圏で引き、回数が多いほど太く濃くする。
  */
 
 export type Period = 'all' | '1y' | '30d';
@@ -260,11 +260,28 @@ export class StatsView {
   private renderTimer = 0;
   private summary: Summary | null = null;
   private fitted = false;
-  private readonly layer = L.layerGroup();
-  private readonly highlight = L.layerGroup();
+  private globe: Globe | null = null;
+  private globeLoading: Promise<void> | null = null;
 
-  constructor(private root: HTMLElement, private map: L.Map, private handlers: StatsHandlers) {
+  constructor(private root: HTMLElement, private globeHost: HTMLElement, private handlers: StatsHandlers) {
     root.addEventListener('click', (event) => this.onClick(event));
+  }
+
+  /** 地球儀は初めて統計を開いたときに作る（MapLibre の読み込みを待つ間もパネルは先に出す）。 */
+  private ensureGlobe(): void {
+    if (this.globe) {
+      this.globe.resize();
+      return;
+    }
+    this.globeLoading ??= Globe.create(this.globeHost)
+      .then((globe) => {
+        this.globe = globe;
+        if (this.summary && this.isOpen) this.drawMap(this.summary);
+      })
+      .catch(() => {
+        this.globeLoading = null;
+        this.globeHost.classList.add('failed');
+      });
   }
 
   get isOpen(): boolean {
@@ -282,8 +299,9 @@ export class StatsView {
     this.error = '';
     this.fitted = false;
     this.summary = null;
-    this.layer.addTo(this.map);
-    this.highlight.addTo(this.map);
+    this.globeHost.hidden = false;
+    this.globe?.highlight(null);
+    this.ensureGlobe();
     this.root.hidden = false;
     this.root.innerHTML = `<div class="panel-head st-head"></div><div class="panel-scroll st-body"></div>`;
 
@@ -307,8 +325,9 @@ export class StatsView {
     this.user = null;
     this.data = null;
     this.summary = null;
-    this.layer.clearLayers().remove();
-    this.highlight.clearLayers().remove();
+    this.globe?.setData([], []);
+    this.globe?.highlight(null);
+    this.globeHost.hidden = true;
     this.root.hidden = true;
     this.root.innerHTML = '';
   }
@@ -568,104 +587,90 @@ export class StatsView {
   // -------------------------------------------------------------------------
 
   private drawMap(s: Summary): void {
-    this.layer.clearLayers();
+    const globe = this.globe;
+    if (!globe) return;
     const lookup = this.handlers.airport;
     const top = s.airports.find((a) => lookup(a.key));
-    if (!top) return;
+    if (!top) {
+      globe.setData([], []);
+      return;
+    }
     // 一番よく使う空港を基準に経度を揃え、路線が日付変更線で切れないようにする
-    const ref = lookup(top.key)!.lon;
-    const at = (icao: string): [number, number] | null => {
-      const p = lookup(icao);
-      return p ? [p.lat, wrapNear(p.lon, ref)] : null;
-    };
+    const home = lookup(top.key)!;
+    const ref = home.lon;
 
     const routes = s.routes.slice(0, MAP_ROUTES);
     const maxRoute = routes[0]?.n || 1;
-    for (const r of [...routes].reverse()) {
+    const lines: GlobeRoute[] = [];
+    for (const r of routes) {
       const a = lookup(r.a);
       const b = lookup(r.b);
       if (!a || !b) continue;
-      const t = Math.sqrt(r.n / maxRoute);
-      const line = greatCircle(a, b, wrapNear(a.lon, ref));
-      const style: L.PolylineOptions = { color: '#f8c023', weight: 1 + 2.5 * t, opacity: 0.3 + 0.6 * t, interactive: false };
-      L.polyline(line, style).addTo(this.layer);
-      // 終点が基準の反対側に出たときは、反対側の終点にもつながるようずらした線を足す
-      const endLon = line[line.length - 1][1];
-      const shift = wrapNear(b.lon, ref) - endLon;
-      if (Math.abs(shift) > 180) L.polyline(line.map(([la, lo]) => [la, lo + shift] as [number, number]), style).addTo(this.layer);
+      const coords = greatCircle(a, b, wrapNear(a.lon, ref)).map(([lat, lon]) => [lon, lat] as [number, number]);
+      lines.push({ coords, t: Math.sqrt(r.n / maxRoute) });
     }
 
     const airports = s.airports.slice(0, MAP_AIRPORTS);
     const maxAirport = airports[0]?.n || 1;
-    const bounds = L.latLngBounds([]);
-    for (const a of [...airports].reverse()) {
-      const ll = at(a.key);
-      if (!ll) continue;
-      bounds.extend(ll);
-      L.circleMarker(ll, {
-        radius: 2.5 + 5 * Math.sqrt(a.n / maxAirport),
-        color: '#1b1a1a',
-        weight: 1.5,
-        fillColor: '#ffffff',
-        fillOpacity: 1
-      })
-        .bindTooltip(`<b>${esc(a.key)}</b> ${esc(this.airportName(a.key))}<br>${fmt.int(a.n)} flights`, { direction: 'top', offset: [0, -4] })
-        .addTo(this.layer);
+    const points: GlobeAirport[] = [];
+    let [w, south, e, north] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const a of airports) {
+      const p = lookup(a.key);
+      if (!p) continue;
+      const lon = wrapNear(p.lon, ref);
+      [w, e, south, north] = [Math.min(w, lon), Math.max(e, lon), Math.min(south, p.lat), Math.max(north, p.lat)];
+      points.push({
+        lon: p.lon,
+        lat: p.lat,
+        t: Math.sqrt(a.n / maxAirport),
+        html: `<b>${esc(a.key)}</b> ${esc(this.airportName(a.key))}<br>${fmt.int(a.n)} flights · ${fmt.int(a.dep)} dep · ${fmt.int(a.arr)} arr`
+      });
     }
+    globe.setData(lines, points);
 
-    if (!this.fitted && bounds.isValid() && !this.loading) {
-      this.fitted = true;
-      this.fit(bounds);
-    } else if (!this.fitted && bounds.isValid() && this.pages.done === 1) {
-      // 最初のページが届いた時点で一度寄せておく（全部読み終えたらもう一度合わせる）
-      this.fit(bounds);
+    const firstPage = this.pages.done === 1 && this.loading;
+    if (!this.fitted && points.length && (!this.loading || firstPage)) {
+      // 最初のページが届いた時点で一度寄せ、全部読み終えたらもう一度合わせる
+      if (!this.loading) this.fitted = true;
+      this.fit([[w, south], [e, north]], [home.lon, home.lat], 6);
     }
   }
 
   /** パネルに隠れない範囲に収める。 */
-  private fit(bounds: L.LatLngBounds, maxZoom = 7): void {
-    const map = this.map.getContainer().getBoundingClientRect();
+  private fit(bounds: [[number, number], [number, number]], focus: [number, number] | null, maxZoom: number): void {
+    const host = this.globeHost.getBoundingClientRect();
     const rect = this.root.getBoundingClientRect();
-    const sheet = rect.width >= map.width - 1;
+    const sheet = rect.width >= host.width - 1;
     const pad = 32;
-    this.map.flyToBounds(bounds, {
-      paddingTopLeft: [sheet ? pad : rect.right - map.left + pad, pad],
-      paddingBottomRight: [pad, sheet ? map.bottom - rect.top + pad : pad],
-      maxZoom,
-      duration: 0.8
-    });
+    const padding: Padding = {
+      top: pad,
+      right: pad,
+      left: sheet ? pad : Math.max(pad, rect.right - host.left + pad),
+      bottom: sheet ? Math.max(pad, host.bottom - rect.top + pad) : pad
+    };
+    this.globe?.fit(bounds, padding, focus, maxZoom);
   }
 
   private showRoute(key: string): void {
     const r = this.summary?.routes.find((x) => x.key === key);
     const a = r && this.handlers.airport(r.a);
     const b = r && this.handlers.airport(r.b);
-    if (!r || !a || !b) return;
-    this.highlight.clearLayers();
-    const line = greatCircle(a, b, a.lon);
-    L.polyline(line, { color: '#303030', weight: 7, opacity: 0.6, interactive: false }).addTo(this.highlight);
-    L.polyline(line, { color: '#ff3e5f', weight: 3.5, opacity: 1, interactive: false }).addTo(this.highlight);
-    for (const [p, ll] of [[a, line[0]], [b, line[line.length - 1]]] as const) {
-      L.marker(ll, {
-        interactive: false,
-        keyboard: false,
-        icon: L.divIcon({ className: 'airport-pin', html: esc(p.icao), iconSize: undefined })
-      }).addTo(this.highlight);
-    }
-    this.fit(L.latLngBounds(line), 8);
+    if (!r || !a || !b || !this.globe) return;
+    const coords = greatCircle(a, b, a.lon).map(([lat, lon]) => [lon, lat] as [number, number]);
+    this.globe.highlight(coords, [
+      { lon: a.lon, lat: a.lat, text: a.icao },
+      { lon: b.lon, lat: b.lat, text: b.icao }
+    ]);
+    const lons = coords.map((c) => c[0]);
+    const lats = coords.map((c) => c[1]);
+    this.fit([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], null, 8);
   }
 
   private showAirport(icao: string): void {
     const p = this.handlers.airport(icao);
-    if (!p) return;
-    this.highlight.clearLayers();
-    const ll = L.latLng(p.lat, wrapNear(p.lon, this.map.getCenter().lng));
-    L.marker(ll, {
-      interactive: false,
-      keyboard: false,
-      icon: L.divIcon({ className: 'airport-pin', html: esc(p.icao), iconSize: undefined })
-    }).addTo(this.highlight);
-    this.fit(L.latLngBounds([ll, ll]), 8);
+    if (!p || !this.globe) return;
+    this.globe.highlight(null, [{ lon: p.lon, lat: p.lat, text: p.icao }]);
+    this.fit([[p.lon, p.lat], [p.lon, p.lat]], null, 8);
   }
 
   private onClick(event: MouseEvent): void {
@@ -683,7 +688,7 @@ export class StatsView {
     } else if (el.dataset.period) {
       this.period = el.dataset.period as Period;
       this.fitted = false;
-      this.highlight.clearLayers();
+      this.globe?.highlight(null);
       this.render();
     } else if (el.dataset.more) {
       const id = el.dataset.more;
