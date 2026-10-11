@@ -7,6 +7,7 @@ import { Globe, type GlobeAirport, type GlobeRoute, type Padding } from './globe
  *
  * 履歴は 100 便ずつ届くので、届いた分から集計し直して表示を育てていく。
  * 飛んだ路線は地球儀（globe.ts）に大圏で引き、回数が多いほど太く濃くする。
+ * 空港を押すと、その空港を発着した路線だけに絞る。
  */
 
 export type Period = 'all' | '1y' | '30d';
@@ -260,11 +261,23 @@ export class StatsView {
   private renderTimer = 0;
   private summary: Summary | null = null;
   private fitted = false;
+  /** 次に地図を描くとき、読み込み中でも範囲を合わせ直す */
+  private refit = false;
+  /** 路線を絞り込んでいる空港 */
+  private focus: string | null = null;
+  private readonly focusChip: HTMLElement;
   private globe: Globe | null = null;
   private globeLoading: Promise<void> | null = null;
 
   constructor(private root: HTMLElement, private globeHost: HTMLElement, private handlers: StatsHandlers) {
     root.addEventListener('click', (event) => this.onClick(event));
+    this.focusChip = document.createElement('div');
+    this.focusChip.className = 'globe-focus';
+    this.focusChip.hidden = true;
+    this.focusChip.addEventListener('click', (event) => {
+      if ((event.target as HTMLElement).closest('[data-action="unfocus"]')) this.setFocus(null);
+    });
+    globeHost.after(this.focusChip);
   }
 
   /** 地球儀は初めて統計を開いたときに作る（MapLibre の読み込みを待つ間もパネルは先に出す）。 */
@@ -276,6 +289,7 @@ export class StatsView {
     this.globeLoading ??= Globe.create(this.globeHost)
       .then((globe) => {
         this.globe = globe;
+        globe.onAirport = (icao) => this.setFocus(this.focus === icao ? null : icao);
         if (this.summary && this.isOpen) this.drawMap(this.summary);
       })
       .catch(() => {
@@ -298,6 +312,7 @@ export class StatsView {
     this.expanded.clear();
     this.error = '';
     this.fitted = false;
+    this.focus = null;
     this.summary = null;
     this.globeHost.hidden = false;
     this.globe?.highlight(null);
@@ -325,11 +340,20 @@ export class StatsView {
     this.user = null;
     this.data = null;
     this.summary = null;
+    this.focus = null;
+    this.renderFocus();
     this.globe?.setData([], []);
     this.globe?.highlight(null);
     this.globeHost.hidden = true;
     this.root.hidden = true;
     this.root.innerHTML = '';
+  }
+
+  /** 空港の絞り込みを解く。解いたら true（Esc で統計を閉じる前に使う）。 */
+  clearFocus(): boolean {
+    if (!this.focus) return false;
+    this.setFocus(null);
+    return true;
   }
 
   /** 空港の座標が後から届いたとき（距離と地図の線を引き直す）。 */
@@ -520,7 +544,11 @@ export class StatsView {
 
   private airportRow(a: AirportTally) {
     const name = this.airportName(a.key);
-    return { main: esc(a.key), sub: esc([name, `${fmt.int(a.dep)} dep · ${fmt.int(a.arr)} arr`].filter(Boolean).join(' · ')), data: `data-airport="${esc(a.key)}"` };
+    return {
+      main: esc(a.key),
+      sub: esc([name, `${fmt.int(a.dep)} dep · ${fmt.int(a.arr)} arr`].filter(Boolean).join(' · ')),
+      data: `data-airport="${esc(a.key)}" aria-pressed="${a.key === this.focus}"`
+    };
   }
 
   private renderRank(id: string, title: string, items: Tally[], row: (t: Tally) => { main: string; sub: string; data?: string }): string {
@@ -590,19 +618,23 @@ export class StatsView {
     const globe = this.globe;
     if (!globe) return;
     const lookup = this.handlers.airport;
-    const top = s.airports.find((a) => lookup(a.key));
+    const focus = this.focus;
+    const top = focus ? s.airports.find((a) => a.key === focus && lookup(a.key)) : s.airports.find((a) => lookup(a.key));
     if (!top) {
       globe.setData([], []);
       return;
     }
-    // 一番よく使う空港を基準に経度を揃え、路線が日付変更線で切れないようにする
+    // 基準の空港（よく使う空港か、絞り込み中の空港）に経度を揃え、路線が日付変更線で切れないようにする
     const home = lookup(top.key)!;
     const ref = home.lon;
 
-    const routes = s.routes.slice(0, MAP_ROUTES);
+    // 絞り込み中は、その空港を発着した路線と相手の空港だけ。相手の丸の大きさはその路線の便数で決める
+    const routes = (focus ? s.routes.filter((r) => r.a === focus || r.b === focus) : s.routes).slice(0, MAP_ROUTES);
     const maxRoute = routes[0]?.n || 1;
     const lines: GlobeRoute[] = [];
+    const partners = new Map<string, number>();
     for (const r of routes) {
+      if (focus) partners.set(r.a === focus ? r.b : r.a, r.n);
       const a = lookup(r.a);
       const b = lookup(r.b);
       if (!a || !b) continue;
@@ -610,45 +642,75 @@ export class StatsView {
       lines.push({ coords, t: Math.sqrt(r.n / maxRoute) });
     }
 
-    const airports = s.airports.slice(0, MAP_AIRPORTS);
+    const airports = focus ? s.airports.filter((a) => a.key === focus || partners.has(a.key)) : s.airports.slice(0, MAP_AIRPORTS);
     const maxAirport = airports[0]?.n || 1;
     const points: GlobeAirport[] = [];
-    let [w, south, e, north] = [Infinity, Infinity, -Infinity, -Infinity];
     for (const a of airports) {
       const p = lookup(a.key);
       if (!p) continue;
-      const lon = wrapNear(p.lon, ref);
-      [w, e, south, north] = [Math.min(w, lon), Math.max(e, lon), Math.min(south, p.lat), Math.max(north, p.lat)];
+      const shared = partners.get(a.key);
+      const name = `<b>${esc(a.key)}</b> ${esc(this.airportName(a.key))}<br>`;
       points.push({
+        icao: a.key,
         lon: p.lon,
         lat: p.lat,
-        t: Math.sqrt(a.n / maxAirport),
-        html: `<b>${esc(a.key)}</b> ${esc(this.airportName(a.key))}<br>${fmt.int(a.n)} flights · ${fmt.int(a.dep)} dep · ${fmt.int(a.arr)} arr`
+        t: shared === undefined ? (focus ? 1 : Math.sqrt(a.n / maxAirport)) : Math.sqrt(shared / maxRoute),
+        html:
+          shared === undefined
+            ? `${name}${fmt.int(a.n)} flights · ${fmt.int(a.dep)} dep · ${fmt.int(a.arr)} arr`
+            : `${name}${fmt.int(shared)} flights with ${esc(focus!)}`
       });
     }
     globe.setData(lines, points);
+    this.renderFocus(routes.length);
 
     const firstPage = this.pages.done === 1 && this.loading;
-    if (!this.fitted && points.length && (!this.loading || firstPage)) {
+    if (this.refit || (!this.fitted && points.length && (!this.loading || firstPage))) {
       // 最初のページが届いた時点で一度寄せ、全部読み終えたらもう一度合わせる
       if (!this.loading) this.fitted = true;
-      this.fit([[w, south], [e, north]], [home.lon, home.lat], 6);
+      this.refit = false;
+      this.fit(points.map((p) => [p.lon, p.lat]), [home.lon, home.lat], focus ? 7 : 6);
     }
   }
 
+  /** 地図の上に、どの空港で絞り込んでいるかと解除ボタンを出す。 */
+  private renderFocus(routes = 0): void {
+    const chip = this.focusChip;
+    chip.hidden = !this.focus;
+    if (!this.focus) {
+      chip.innerHTML = '';
+      return;
+    }
+    const name = this.airportName(this.focus);
+    chip.innerHTML = `<span><b>${esc(this.focus)}</b>${name ? ` ${esc(name)}` : ''}<small>${fmt.int(routes)} ${routes === 1 ? 'route' : 'routes'}</small></span>
+      <button type="button" class="icon-btn" data-action="unfocus" aria-label="Show all routes">${ICON_CLOSE}</button>`;
+  }
+
+  /** 空港で路線を絞り込む（null で全路線に戻す）。 */
+  private setFocus(icao: string | null): void {
+    if (icao && !this.handlers.airport(icao)) return;
+    this.focus = icao;
+    this.refit = true;
+    this.globe?.highlight(null, icao ? [{ lon: this.handlers.airport(icao)!.lon, lat: this.handlers.airport(icao)!.lat, text: icao }] : []);
+    this.root.querySelectorAll<HTMLElement>('[data-airport]').forEach((row) => row.setAttribute('aria-pressed', String(row.dataset.airport === icao)));
+    if (this.summary) this.drawMap(this.summary);
+  }
+
   /** パネルに隠れない範囲に収める。 */
-  private fit(bounds: [[number, number], [number, number]], focus: [number, number] | null, maxZoom: number): void {
+  private fit(points: Array<[number, number]>, focus: [number, number] | null, maxZoom: number): void {
     const host = this.globeHost.getBoundingClientRect();
     const rect = this.root.getBoundingClientRect();
     const sheet = rect.width >= host.width - 1;
     const pad = 32;
+    // 絞り込み中の表示（地図の上）にも重ならないようにする。スマホは地図が狭いので、少し重なっても地球を大きく出す
+    const chip = this.focusChip.hidden || sheet ? null : this.focusChip.getBoundingClientRect();
     const padding: Padding = {
-      top: pad,
+      top: chip ? Math.max(pad, chip.bottom - host.top + 16) : pad,
       right: pad,
       left: sheet ? pad : Math.max(pad, rect.right - host.left + pad),
       bottom: sheet ? Math.max(pad, host.bottom - rect.top + pad) : pad
     };
-    this.globe?.fit(bounds, padding, focus, maxZoom);
+    this.globe?.fit(points, padding, focus, maxZoom);
   }
 
   private showRoute(key: string): void {
@@ -656,21 +718,18 @@ export class StatsView {
     const a = r && this.handlers.airport(r.a);
     const b = r && this.handlers.airport(r.b);
     if (!r || !a || !b || !this.globe) return;
+    // 絞り込み中の空港を通らない路線を選んだら、全路線の表示に戻す
+    if (this.focus && r.a !== this.focus && r.b !== this.focus) {
+      this.focus = null;
+      this.root.querySelectorAll('[data-airport]').forEach((row) => row.setAttribute('aria-pressed', 'false'));
+      if (this.summary) this.drawMap(this.summary);
+    }
     const coords = greatCircle(a, b, a.lon).map(([lat, lon]) => [lon, lat] as [number, number]);
     this.globe.highlight(coords, [
       { lon: a.lon, lat: a.lat, text: a.icao },
       { lon: b.lon, lat: b.lat, text: b.icao }
     ]);
-    const lons = coords.map((c) => c[0]);
-    const lats = coords.map((c) => c[1]);
-    this.fit([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], null, 8);
-  }
-
-  private showAirport(icao: string): void {
-    const p = this.handlers.airport(icao);
-    if (!p || !this.globe) return;
-    this.globe.highlight(null, [{ lon: p.lon, lat: p.lat, text: p.icao }]);
-    this.fit([[p.lon, p.lat], [p.lon, p.lat]], null, 8);
+    this.fit(coords, null, 8);
   }
 
   private onClick(event: MouseEvent): void {
@@ -688,6 +747,7 @@ export class StatsView {
     } else if (el.dataset.period) {
       this.period = el.dataset.period as Period;
       this.fitted = false;
+      this.focus = null;
       this.globe?.highlight(null);
       this.render();
     } else if (el.dataset.more) {
@@ -698,7 +758,7 @@ export class StatsView {
     } else if (el.dataset.route) {
       this.showRoute(el.dataset.route);
     } else if (el.dataset.airport) {
-      this.showAirport(el.dataset.airport);
+      this.setFocus(this.focus === el.dataset.airport ? null : el.dataset.airport);
     }
   }
 }

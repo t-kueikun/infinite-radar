@@ -983,7 +983,8 @@ document.addEventListener('keydown', (event) => {
   } else if (event.key === 'Escape' && (!els.filterPop.hidden || !els.atcPop.hidden)) {
     closePopovers();
   } else if (event.key === 'Escape' && !typing && stats.isOpen) {
-    closeStats();
+    // 空港で絞り込んでいるときは、まず全路線の表示に戻す
+    if (!stats.clearFocus()) closeStats();
   } else if (event.key === 'Escape' && !typing && state.selectedId) {
     select(null);
   }

@@ -22,7 +22,7 @@ const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas';
 const ROUTE_COLOR = '#f8c023';
 
 export type GlobeRoute = { coords: Array<[number, number]>; t: number };
-export type GlobeAirport = { lon: number; lat: number; t: number; html: string };
+export type GlobeAirport = { icao: string; lon: number; lat: number; t: number; html: string };
 export type Padding = { top: number; bottom: number; left: number; right: number };
 
 let loading: Promise<ML> | null = null;
@@ -52,10 +52,17 @@ const empty = (): GeoJSON.FeatureCollection => ({ type: 'FeatureCollection', fea
 export class Globe {
   private readonly hlMarkers: MapLibre.Marker[] = [];
   private readonly popup: MapLibre.Popup;
+  /** 空港の丸が押されたとき */
+  onAirport: ((icao: string) => void) | null = null;
 
   private constructor(private ml: ML, readonly map: MapLibre.Map) {
     this.popup = new ml.Popup({ closeButton: false, closeOnClick: false, offset: 10, className: 'globe-pop' });
-    map.on('mousemove', 'airports', (e) => {
+    // 丸は小さいので、指でも押せるよう透明な大きい丸（airports-hit）で拾う
+    map.on('click', 'airports-hit', (e) => {
+      const icao = e.features?.[0]?.properties?.icao;
+      if (icao) this.onAirport?.(String(icao));
+    });
+    map.on('mousemove', 'airports-hit', (e) => {
       const f = e.features?.[0];
       if (!f || f.geometry.type !== 'Point') return;
       map.getCanvas().style.cursor = 'pointer';
@@ -64,7 +71,7 @@ export class Globe {
         .setHTML(String(f.properties?.html ?? ''))
         .addTo(map);
     });
-    map.on('mouseleave', 'airports', () => {
+    map.on('mouseleave', 'airports-hit', () => {
       map.getCanvas().style.cursor = '';
       this.popup.remove();
     });
@@ -131,13 +138,17 @@ export class Globe {
               'circle-stroke-width': 1.5,
               'circle-pitch-alignment': 'map'
             }
-          }
+          },
+          { id: 'airports-hit', type: 'circle', source: 'airports', paint: { 'circle-radius': 14, 'circle-opacity': 0 } }
         ]
       }
     });
     if (!window.matchMedia('(pointer: coarse)').matches) {
       map.addControl(new ml.NavigationControl({ showCompass: false }), 'bottom-right');
     }
+    // 出典は最初から（i）だけにしておく。広げたままだと狭い画面で上の表示に重なる
+    // （MapLibre は出典が揃ったときに広げるので、描き終わってから畳む）
+    map.once('idle', () => container.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show'));
     map.touchZoomRotate.disableRotation();
     map.dragRotate.disable();
     await new Promise<void>((resolve) => (map.loaded() ? resolve() : map.once('load', () => resolve())));
@@ -160,7 +171,7 @@ export class Globe {
       type: 'FeatureCollection',
       features: [...airports]
         .sort((a, b) => a.t - b.t)
-        .map((a) => ({ type: 'Feature', properties: { t: a.t, html: a.html }, geometry: { type: 'Point', coordinates: [a.lon, a.lat] } }))
+        .map((a) => ({ type: 'Feature', properties: { icao: a.icao, t: a.t, html: a.html }, geometry: { type: 'Point', coordinates: [a.lon, a.lat] } }))
     });
   }
 
@@ -181,24 +192,34 @@ export class Globe {
   }
 
   /**
-   * 範囲が見えるように動かす。世界中に散らばっているときは、よく使う空港（focus）を
-   * 正面にして地球全体を見せる。
+   * 点がすべて見えるように動かす。中心は点の重心（球面上）にするが、地球全体に散らばっていて
+   * 重心が定まらないときは focus（よく使う空港など）を正面にする。
+   *
+   * cameraForBounds は地球儀だと今の視点に引きずられて広い範囲で外れるので、ズームは自前で出す。
+   * 地球の半径（px）は 512·2^z / (2π·cos 緯度)。中心から角度 θ の点は画面上で R·sin θ 離れる。
    */
-  fit(bounds: [[number, number], [number, number]], padding: Padding, focus: [number, number] | null, maxZoom: number): void {
-    const camera = this.map.cameraForBounds(bounds, { padding, maxZoom });
-    const wide = !camera || (camera.zoom ?? 0) < 2;
-    // 地球全体を見せるときは、空いている範囲いっぱい（短い辺の 85%）の大きさにする。
-    // ズーム z での地球の直径はおよそ 600px × 2^(z - 1.2)
+  fit(points: Array<[number, number]>, padding: Padding, focus: [number, number] | null, maxZoom: number): void {
+    if (!points.length) return;
+    const r = Math.PI / 180;
+    const vec = ([lon, lat]: [number, number]) => [Math.cos(lat * r) * Math.cos(lon * r), Math.cos(lat * r) * Math.sin(lon * r), Math.sin(lat * r)];
+    const sum = [0, 0, 0];
+    for (const p of points) vec(p).forEach((v, i) => (sum[i] += v));
+    const len = Math.hypot(...sum) / points.length;
+    const center: [number, number] =
+      len < 0.5 && focus ? focus : [Math.atan2(sum[1], sum[0]) / r, Math.atan2(sum[2], Math.hypot(sum[0], sum[1])) / r];
+    const c = vec(center);
+    // 中心から一番遠い点までの角度（90° を超えたら地球の縁＝半径いっぱい）
+    let reach = 0;
+    for (const p of points) {
+      const v = vec(p);
+      reach = Math.max(reach, Math.acos(Math.min(1, v[0] * c[0] + v[1] * c[1] + v[2] * c[2])));
+    }
     const { clientWidth: w, clientHeight: h } = this.map.getContainer();
-    const room = Math.min(w - padding.left - padding.right, h - padding.top - padding.bottom);
-    const whole = 1.2 + Math.log2(Math.max(180, room * 0.85) / 600);
-    this.map.flyTo({
-      center: wide && focus ? focus : (camera?.center ?? focus ?? [0, 30]),
-      zoom: wide ? whole : Math.min(maxZoom, camera!.zoom!),
-      padding,
-      duration: 1200,
-      essential: true
-    });
+    const room = Math.max(180, Math.min(w - padding.left - padding.right, h - padding.top - padding.bottom));
+    // 地球全体のときは遠近で縁が少し内側に見えるぶん、半径を空き幅いっぱいにとる
+    const radius = (room * (reach >= Math.PI / 2 ? 1 : 0.9)) / 2 / Math.max(0.02, Math.sin(Math.min(reach, Math.PI / 2)));
+    const zoom = Math.log2((radius * 2 * Math.PI * Math.cos(center[1] * r)) / 512);
+    this.map.flyTo({ center, zoom: Math.min(maxZoom, zoom), padding, duration: 1200, essential: true });
   }
 
   resize(): void {

@@ -896,6 +896,8 @@ a.my-flight.idle { cursor: pointer; color: var(--primary); }
 }
 button.rank-row { cursor: pointer; border-radius: var(--radius); }
 button.rank-row:hover .r-body b { color: var(--primary); }
+.rank-row[aria-pressed='true'] .r-body b { color: var(--primary); }
+.rank-row[aria-pressed='true'] .r-bar { background: var(--primary); opacity: 1; }
 .r-no { font-size: 12px; line-height: 20px; color: var(--on-surface-variant); font-variant-numeric: tabular-nums; text-align: right; }
 .r-body { display: grid; min-width: 0; }
 .r-body b { font-size: 14px; line-height: 20px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -944,6 +946,29 @@ button.rank-row:hover .r-body b { color: var(--primary); }
   box-shadow: var(--elevation-md);
 }
 .globe-pop .maplibregl-popup-tip { display: none; }
+/* 空港で路線を絞り込んでいるときの表示（統計パネルの右上） */
+.globe-focus {
+  position: absolute;
+  z-index: 795;
+  top: var(--space-sm);
+  left: calc(var(--space-sm) * 2 + 400px);
+  max-width: calc(100% - var(--space-sm) * 3 - 400px - 140px);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 2px 2px 14px;
+  border: 1px solid #000;
+  border-radius: var(--radius-full);
+  background: var(--chrome);
+  color: var(--on-surface);
+  box-shadow: var(--elevation-md);
+  font-size: 14px;
+  line-height: 20px;
+}
+.globe-focus[hidden] { display: none; }
+.globe-focus > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.globe-focus b { font-weight: 600; color: var(--primary); }
+.globe-focus small { margin-left: 8px; font-size: 12px; color: var(--on-surface-variant); }
 .globe-pop b { font-weight: 600; }
 
 /* ---------- Responsive ---------- */
@@ -1061,6 +1086,8 @@ button.rank-row:hover .r-body b { color: var(--primary); }
   /* 下はパネルで隠れるので、地図の出典は上に出す */
   .globe .maplibregl-ctrl-bottom-right { top: 0; bottom: auto; }
   .stats-panel { width: auto; max-height: 60%; }
+  .globe-focus { top: 8px; left: 8px; max-width: calc(100% - 72px); padding-left: 12px; font-size: 13px; }
+  .globe-focus .icon-btn { width: 32px; height: 32px; }
   .st-grid .v { font-size: 16px; line-height: 22px; }
   @keyframes sheet-in { from { transform: translateY(24px); opacity: 0; } }
 }
