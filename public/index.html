@@ -52,6 +52,10 @@
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 20V10h3v10zm6.5 0V4h3v16zM17 20v-7h3v7z" fill="currentColor"/></svg>
           <span class="txt">My stats</span>
         </button>
+        <button type="button" class="tool-btn" id="top-btn" aria-expanded="false" aria-controls="top-pop" title="Top pilots online">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M7 3h10v2h3v3a4 4 0 0 1-4 4h-.4A5 5 0 0 1 13 14.9V18h3v2H8v-2h3v-3.1A5 5 0 0 1 8.4 12H8a4 4 0 0 1-4-4V5h3zm0 4H6v1a2 2 0 0 0 1 1.7zm10 0v2.7A2 2 0 0 0 18 8V7z" fill="currentColor"/></svg>
+          <span class="txt">Top pilots</span>
+        </button>
         <button type="button" class="tool-btn" id="filter-btn" aria-expanded="false" aria-controls="filter-pop">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M3 5h18l-7 8.5V20l-4-2v-4.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
           <span class="txt">Filters</span><span class="count" id="filter-count" hidden></span>
@@ -127,6 +131,7 @@
       </section>
 
       <section class="popover" id="atc-pop" aria-label="Active ATC" hidden></section>
+      <section class="popover top-pop" id="top-pop" aria-label="Top pilots" hidden></section>
 
       <div class="toast" id="toast" role="status" hidden></div>
       <div class="map-tooltip" id="tooltip" hidden></div>

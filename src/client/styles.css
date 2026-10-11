@@ -386,7 +386,8 @@ a.my-flight.idle { cursor: pointer; color: var(--primary); }
 
 .popover {
   position: absolute;
-  z-index: 860;
+  /* Leaflet の拡大縮小ボタン（z-index 1000）より上に出す */
+  z-index: 1010;
   top: calc(var(--space-sm) + 48px);
   right: var(--space-sm);
   width: 340px;
@@ -536,6 +537,39 @@ a.my-flight.idle { cursor: pointer; color: var(--primary); }
   pointer-events: auto;
   cursor: pointer;
 }
+
+/* トップパイロット */
+.top-pop { width: 360px; }
+.top-sort { margin: 0 var(--space-md) 8px; }
+.top-progress { margin: 0 var(--space-md) 8px; font-size: 12px; line-height: 16px; color: var(--on-surface-variant); font-variant-numeric: tabular-nums; }
+.top-progress b { color: var(--on-surface); }
+.top-progress .progress { margin: 6px 0 4px; }
+.top-list { list-style: none; margin: 0; padding: 0 var(--space-xs) var(--space-xs); overflow-y: auto; overscroll-behavior: contain; }
+.top-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px var(--space-sm) 6px 4px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 150ms ease-in-out;
+}
+.top-row:hover { background: var(--surface-container-high); }
+.top-row .r-no { line-height: 20px; }
+.top-main { display: grid; min-width: 0; }
+.top-main b { font-size: 14px; line-height: 20px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.top-main b i { margin-left: 6px; padding: 0 6px; border-radius: var(--radius-full); background: var(--secondary); color: var(--on-secondary); font-style: normal; font-size: 11px; line-height: 16px; vertical-align: 1px; }
+.top-main small { font-size: 12px; line-height: 16px; color: var(--on-surface-variant); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.top-val { font-size: 14px; line-height: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.top-val small { margin-left: 1px; font-size: 12px; font-weight: 500; color: var(--on-surface-variant); }
+.top-row.me { background: rgba(248, 192, 35, 0.08); }
 
 .atc-list { list-style: none; margin: 0; padding: 0 var(--space-xs) var(--space-xs); overflow-y: auto; overscroll-behavior: contain; }
 .atc-list li { display: flex; align-items: center; gap: 8px; padding-right: var(--space-sm); border-radius: var(--radius-md); transition: background 150ms ease-in-out; }
@@ -828,7 +862,7 @@ a.my-flight.idle { cursor: pointer; color: var(--primary); }
 .st-progress b { color: var(--on-surface); }
 .st-progress .progress { margin-top: 6px; }
 .st-period { margin: 0 var(--space-md); }
-.st-period button {
+.seg > button {
   flex: 1;
   padding: 5px 8px;
   border: 0;
@@ -842,8 +876,8 @@ a.my-flight.idle { cursor: pointer; color: var(--primary); }
   white-space: nowrap;
   cursor: pointer;
 }
-.st-period button:hover { color: var(--on-surface); }
-.st-period button[aria-pressed='true'] { background: var(--secondary); color: var(--on-secondary); }
+.seg > button:hover { color: var(--on-surface); }
+.seg > button[aria-pressed='true'] { background: var(--secondary); color: var(--on-secondary); }
 .st-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

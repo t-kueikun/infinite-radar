@@ -30,6 +30,7 @@ import {
 import { activeCount, createMatcher, DEFAULT_FILTERS, FilterForm, loadFilters, saveFilters, type AirportFlights } from './filters';
 import { FlightPanel } from './panel';
 import { StatsView } from './stats';
+import { TopPilotsView } from './top';
 
 const POLL_MS = 10_000;
 const DETAIL_REFRESH_MS = 60_000;
@@ -54,6 +55,8 @@ const els = {
   atcBtn: $<HTMLButtonElement>('atc-btn'),
   atcCount: $('atc-count'),
   atcPop: $('atc-pop'),
+  topBtn: $<HTMLButtonElement>('top-btn'),
+  topPop: $('top-pop'),
   me: $('me'),
   filterLocked: $('filter-locked'),
   filterReset: $('filter-reset'),
@@ -226,6 +229,7 @@ function switchSession(id: string): void {
   els.count.textContent = '—';
   renderServers();
   syncUrl();
+  if (!els.topPop.hidden) topPilots.open(id, name);
   void poll();
 }
 
@@ -711,10 +715,11 @@ els.atcPop.addEventListener('click', (event) => {
 // ポップオーバー（フィルター / ATC）
 // ---------------------------------------------------------------------------
 
-type PopName = 'filter' | 'atc';
+type PopName = 'filter' | 'atc' | 'top';
 const pops: Record<PopName, { btn: HTMLButtonElement; pop: HTMLElement }> = {
   filter: { btn: els.filterBtn, pop: els.filterPop },
-  atc: { btn: els.atcBtn, pop: els.atcPop }
+  atc: { btn: els.atcBtn, pop: els.atcPop },
+  top: { btn: els.topBtn, pop: els.topPop }
 };
 
 function openPopover(name: PopName): void {
@@ -726,6 +731,11 @@ function openPopover(name: PopName): void {
   hideTooltip();
   if (name === 'filter') filterForm.updateSuggestions(state.flights);
   if (name === 'atc') renderAtc();
+  if (name === 'top' && state.sessionId) {
+    topPilots.open(state.sessionId, state.sessions.find((s) => s.id === state.sessionId)?.name ?? '');
+  } else {
+    topPilots.close();
+  }
 }
 
 function closePopovers(): void {
@@ -733,11 +743,29 @@ function closePopovers(): void {
     pop.hidden = true;
     btn.setAttribute('aria-expanded', 'false');
   }
+  topPilots.close();
 }
 
 for (const [name, { btn, pop }] of Object.entries(pops) as Array<[PopName, (typeof pops)[PopName]]>) {
   btn.addEventListener('click', () => (pop.hidden ? openPopover(name) : closePopovers()));
 }
+
+// ---------------------------------------------------------------------------
+// トップパイロット（いまオンラインの人の通算飛行時間・着陸回数の順位）
+// ---------------------------------------------------------------------------
+
+const topPilots = new TopPilotsView(els.topPop, {
+  onSelect: (flightId) => {
+    if (!state.byId.has(flightId)) {
+      showToast('This pilot has left the server.');
+      return;
+    }
+    // スマホではランキングが地図を覆うので閉じてから機体を出す
+    if (window.matchMedia('(max-width: 900px)').matches) closePopovers();
+    select(flightId, { fly: true });
+  },
+  me: () => state.viewer?.ifcUsername?.toLowerCase() ?? null
+});
 
 // 時間表示（何分前から管制しているか）を更新する
 window.setInterval(() => {
@@ -980,7 +1008,7 @@ document.addEventListener('keydown', (event) => {
   if (event.key === '/' && !typing) {
     event.preventDefault();
     els.search.focus();
-  } else if (event.key === 'Escape' && (!els.filterPop.hidden || !els.atcPop.hidden)) {
+  } else if (event.key === 'Escape' && (!els.filterPop.hidden || !els.atcPop.hidden || !els.topPop.hidden)) {
     closePopovers();
   } else if (event.key === 'Escape' && !typing && stats.isOpen) {
     // 空港で絞り込んでいるときは、まず全路線の表示に戻す

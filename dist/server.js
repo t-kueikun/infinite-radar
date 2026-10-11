@@ -420,6 +420,92 @@ async function getHistoryPage(username, page) {
         })
     };
 }
+// ---------------------------------------------------------------------------
+// トップパイロット（いまオンラインの人を、通算の飛行時間・着陸回数で並べる）
+//
+// IF には全体のランキングが無いので、オンラインの人の記録を /users で集めて並べる。
+// /users は 1 回 25 人まで、API 全体の上限は 1 分に約 100 回。Expert（約 3,000 人）を
+// 一気に取ると地図の更新まで止まるので、2.5 秒に 1 回（1 分 24 回）だけ少しずつ集める。
+// 集めるのは誰かがランキングを開いている間だけ（開いているブラウザが数秒ごとに問い合わせ、
+// 1 回の問い合わせで最大 5 秒ぶん集めてから、その時点の順位を返す）。
+// 記録はメモリに数時間だけ持つ（IF の規約どおり DB には保存しない）。
+// ---------------------------------------------------------------------------
+const TOP_BATCH = 25;
+const TOP_GAP_MS = 2500;
+const TOP_WORK_MS = 5 * SECOND;
+const TOP_RECORD_TTL = 3 * 60 * MINUTE;
+/** 429 を受けたら、しばらく集めるのをやめる */
+const TOP_COOLDOWN_MS = 45 * SECOND;
+const TOP_LIST = 100;
+const pilotRecords = new Map();
+let topNextCall = 0;
+let topCollecting = null;
+async function collectPilots(userIds) {
+    const deadline = Date.now() + TOP_WORK_MS;
+    const now = Date.now();
+    // 並び順を固定し、同じ人を何度も取りに行かないようにする
+    const missing = userIds.filter((id) => (pilotRecords.get(id)?.at ?? 0) + TOP_RECORD_TTL < now).sort();
+    for (let i = 0; i < missing.length; i += TOP_BATCH) {
+        const wait = topNextCall - Date.now();
+        if (Date.now() + Math.max(0, wait) > deadline)
+            break;
+        if (wait > 0)
+            await new Promise((resolve) => setTimeout(resolve, wait));
+        topNextCall = Date.now() + TOP_GAP_MS;
+        const batch = missing.slice(i, i + TOP_BATCH);
+        try {
+            const users = await ifApi('/users', { userIds: batch });
+            const at = Date.now();
+            // 返ってこなかった人も空の記録にして、取り直し続けないようにする
+            for (const id of batch)
+                pilotRecords.set(id, { at, ifc: '', va: '', grade: 0, minutes: 0, landings: 0 });
+            for (const u of users) {
+                pilotRecords.set(u.userId, {
+                    at,
+                    ifc: u.discourseUsername || '',
+                    va: u.virtualOrganization || '',
+                    grade: u.grade,
+                    minutes: Math.round(u.flightTime),
+                    landings: u.landingCount
+                });
+            }
+        }
+        catch (error) {
+            if (error.status === 429)
+                topNextCall = Date.now() + TOP_COOLDOWN_MS;
+            break;
+        }
+    }
+    if (pilotRecords.size > 20_000) {
+        for (const [id, r] of pilotRecords)
+            if (r.at + TOP_RECORD_TTL < now)
+                pilotRecords.delete(id);
+    }
+}
+/**
+ * pilots[i] = [flightId, callsign, 名前, VA, グレード, 通算飛行分, 通算着陸回数]
+ * 飛行時間と着陸回数それぞれの上位 TOP_LIST 人を合わせて返す（並べ替えはブラウザで）。
+ */
+async function getTopPilots(sessionId) {
+    const flights = await getCompactFlights(sessionId);
+    const users = flightUsers.get(sessionId) ?? new Map();
+    const ids = [...new Set(users.values())];
+    topCollecting ??= collectPilots(ids).finally(() => (topCollecting = null));
+    await topCollecting;
+    const seen = new Set();
+    const known = [];
+    for (const f of flights.f) {
+        const userId = users.get(String(f[0]));
+        const r = userId ? pilotRecords.get(userId) : undefined;
+        if (!userId || !r || seen.has(userId))
+            continue;
+        seen.add(userId);
+        known.push([String(f[0]), String(f[1]), String(f[2]) || r.ifc, r.va || String(f[10]), r.grade, r.minutes, r.landings]);
+    }
+    const top = (col) => [...known].sort((a, b) => b[col] - a[col]).slice(0, TOP_LIST);
+    const pilots = [...new Set([...top(5), ...top(6)])];
+    return { online: ids.length, known: seen.size, pilots };
+}
 /** IFSpotters の Next.js 画像最適化を通した URL。元のサムネ（1200px・約 180KB）が 750px の WebP/AVIF（約 16KB）になる */
 function optimizedThumb(thumbKey) {
     return `${IFSPOTTERS_BASE}/_next/image?url=${encodeURIComponent(`/api/img/${thumbKey}`)}&w=750&q=75`;
@@ -576,6 +662,13 @@ app.get('/api/history', route(async (req, res) => {
     const page = Math.max(1, Math.min(HISTORY_MAX_PAGES, Number(req.query.page) || 1));
     const result = await getHistoryPage(requireParam(req, 'user'), page);
     res.set('Cache-Control', 'public, max-age=300, s-maxage=600');
+    return result;
+}));
+app.get('/api/top-pilots', route(async (req, res) => {
+    const result = await getTopPilots(requireParam(req, 'sessionId'));
+    // 集め終わるまではすぐ次を問い合わせられるよう短く、揃ったら新しく来た人の分だけなので長めに
+    const done = result.known >= result.online;
+    res.set('Cache-Control', done ? 'public, max-age=60, s-maxage=60, stale-while-revalidate=300' : 'public, max-age=4, s-maxage=4');
     return result;
 }));
 app.get('/api/locate', route(async (req, res) => {

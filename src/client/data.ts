@@ -208,6 +208,26 @@ export async function fetchHistoryPage(user: string, page: number, signal?: Abor
   };
 }
 
+// ---------------------------------------------------------------------------
+// トップパイロット（いまオンラインの人の通算記録）
+// ---------------------------------------------------------------------------
+
+export type TopPilot = { flightId: string; callsign: string; name: string; va: string; grade: number; minutes: number; landings: number };
+/** online: サーバーにいる人数、known: そのうち記録を取り終えた人数（少しずつ増える） */
+export type TopPilots = { online: number; known: number; pilots: TopPilot[] };
+
+export async function fetchTopPilots(sessionId: string, signal?: AbortSignal): Promise<TopPilots> {
+  const data = await getJson<{ online: number; known: number; pilots: Array<[string, string, string, string, number, number, number]> }>(
+    `/api/top-pilots?sessionId=${encodeURIComponent(sessionId)}`,
+    signal
+  );
+  return {
+    online: data.online,
+    known: data.known,
+    pilots: data.pilots.map(([flightId, callsign, name, va, grade, minutes, landings]) => ({ flightId, callsign, name, va, grade, minutes, landings }))
+  };
+}
+
 export type LocatedFlight = { sessionId: string; server: string; flightId: string; callsign: string };
 
 /** IFC ユーザー名から、いま飛んでいるサーバーと便を探す。 */
