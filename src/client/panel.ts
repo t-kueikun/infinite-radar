@@ -10,6 +10,7 @@ const ICON = {
   noImage: '<svg viewBox="0 0 24 24" width="40" height="40" aria-hidden="true"><path d="M21 5v12.2l-2-2V5H8.8l-2-2H19a2 2 0 0 1 2 2zM2.8 2.8 21.2 21.2l-1.4 1.4-1.6-1.6H5a2 2 0 0 1-2-2V5.8L1.4 4.2zM5 7.8V19h11.2l-3-3H6l2.6-3.4 1.6 2-5.2-6.8z" fill="currentColor"/></svg>',
   follow: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8zm-1-7h2v3.1A8 8 0 0 1 19.9 11H23v2h-3.1A8 8 0 0 1 13 19.9V23h-2v-3.1A8 8 0 0 1 4.1 13H1v-2h3.1A8 8 0 0 1 11 4.1zm1 5a6 6 0 1 0 0 12 6 6 0 0 0 0-12z" fill="currentColor"/></svg>',
   upload: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M11 16V7.8l-3.6 3.6L6 10l6-6 6 6-1.4 1.4L13 7.8V16zm-7 2h16v2H4z" fill="currentColor"/></svg>',
+  stats: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M4 20V10h3v10zm6.5 0V4h3v16zM17 20v-7h3v7z" fill="currentColor"/></svg>',
   link: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M14 3h7v7h-2V6.4l-9.3 9.3-1.4-1.4L17.6 5H14zM5 5h6v2H5v12h12v-6h2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" fill="currentColor"/></svg>'
 };
 
@@ -35,6 +36,7 @@ function esc(value: string): string {
 export type PanelHandlers = {
   onClose: () => void;
   onToggleFollow: () => void;
+  onStats: (ifcUsername: string) => void;
 };
 
 export class FlightPanel {
@@ -50,6 +52,7 @@ export class FlightPanel {
       const action = target.dataset.action;
       if (action === 'close') handlers.onClose();
       if (action === 'follow') handlers.onToggleFollow();
+      if (action === 'stats' && target.dataset.user) handlers.onStats(target.dataset.user);
       if (action === 'prev') this.showPhoto(this.photoIndex - 1);
       if (action === 'next') this.showPhoto(this.photoIndex + 1);
     });
@@ -216,7 +219,11 @@ export class FlightPanel {
           ['Violations', fmt.int(p.violations), '']
         ]
           .map(([k, v, u]) => `<div><div class="k">${k}</div><div class="v">${v}${u ? `<small>${u}</small>` : ''}</div></div>`)
-          .join('')}</div>`
+          .join('')}</div>${
+          p.ifc
+            ? `<button type="button" class="btn btn-tertiary btn-sm st-open" data-action="stats" data-user="${esc(p.ifc)}">${ICON.stats}View flight stats</button>`
+            : ''
+        }`
       : '';
 
     const history = pilot.history.length

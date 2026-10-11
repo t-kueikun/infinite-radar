@@ -23,6 +23,7 @@ npm run build    # public/app.js と dist/server.js を生成
 | `src/client/main.ts` | 地図（Leaflet）、ポーリング、選択・追従、検索 |
 | `src/client/aircraft-layer.ts` | 全機体を 1 枚の canvas に描画するレイヤー（当たり判定込み） |
 | `src/client/panel.ts` | フライト詳細パネル（写真・ルート・統計・高度プロファイル） |
+| `src/client/stats.ts` | フライト統計（全履歴から空港・機種・航空会社・路線を集計し、路線を地図に描く） |
 | `src/client/data.ts` | API 型、デッドレコニング、距離計算、フォーマット |
 
 ## API
@@ -31,6 +32,7 @@ npm run build    # public/app.js と dist/server.js を生成
 - `GET /api/flights?sessionId=` — 全機体（列を絞った配列形式。`types` に機種/リバリー名を重複排除）
 - `GET /api/flights/:id?sessionId=` — 飛行計画・出発/到着空港・航跡
 - `GET /api/photos?aircraft=&livery=` — IFSpotters の承認済み写真（機種名 + リバリー名の完全一致）
+- `GET /api/history?user=<IFC ユーザー名>&page=` — フライト履歴を 100 便ずつ（最大 100 ページ）。集計はブラウザで行う。Live API の 429 を避けるため、履歴の取得だけはサーバー全体で同時 2 本・200ms 間隔に絞る
 
 ## 軽量化のポイント
 

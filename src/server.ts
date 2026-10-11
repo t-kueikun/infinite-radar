@@ -25,6 +25,8 @@ const TTL = {
   photoLookup: MINUTE,
   pilot: 5 * MINUTE,
   pilotFlights: 2 * MINUTE,
+  userId: 60 * MINUTE,
+  historyPage: 10 * MINUTE,
   world: 30 * SECOND
 };
 
@@ -379,7 +381,10 @@ type RawUserStats = {
 };
 
 type RawUserFlight = {
+  id: string;
   created: string;
+  aircraftId: string;
+  nightTime: number;
   callsign: string;
   server: string;
   liveryId: string;
@@ -436,6 +441,114 @@ async function getPilot(sessionId: string, flightId: string) {
         f.violations?.length ?? 0
       ];
       })
+  };
+}
+
+// ---------------------------------------------------------------------------
+// フライト統計（IFC ユーザー名で全履歴を 100 便ずつ返し、集計はブラウザで行う）
+//
+// 履歴の多い人は 70 ページを超える。Live API は短時間に呼びすぎると 429 を返し、
+// 地図のライブ更新まで巻き込むので、履歴の取得だけはインスタンス全体で同時 2 本・
+// 間隔 200ms に絞り、429 は retry-after を待ってやり直す。
+// ---------------------------------------------------------------------------
+
+const HISTORY_PAGE_SIZE = 100;
+/** 1 人あたり最大 10,000 便（それより古いものは集計しない） */
+const HISTORY_MAX_PAGES = 100;
+const HISTORY_CONCURRENCY = 2;
+const HISTORY_GAP_MS = 200;
+
+let historyActive = 0;
+let historyLastStart = 0;
+const historyQueue: Array<() => void> = [];
+
+async function historySlot<T>(task: () => Promise<T>): Promise<T> {
+  if (historyActive >= HISTORY_CONCURRENCY) await new Promise<void>((resolve) => historyQueue.push(resolve));
+  historyActive++;
+  try {
+    const wait = historyLastStart + HISTORY_GAP_MS - Date.now();
+    historyLastStart = Math.max(Date.now(), historyLastStart + HISTORY_GAP_MS);
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    return await task();
+  } finally {
+    historyActive--;
+    historyQueue.shift()?.();
+  }
+}
+
+async function ifApiPolite<T>(endpoint: string): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await historySlot(() => ifApi<T>(endpoint));
+    } catch (error) {
+      if ((error as HttpError).status !== 429 || attempt >= 2) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 5 * SECOND * (attempt + 1)));
+    }
+  }
+}
+
+async function resolveUser(username: string) {
+  const name = username.trim().replace(/^@/, '');
+  if (!/^[\w.-]{1,40}$/.test(name)) throw httpError(400, 'Invalid username');
+  return cached(`user:${name.toLowerCase()}`, TTL.userId, async () => {
+    const [user] = await ifApi<RawUserStats[]>('/users', { discourseNames: [name] });
+    if (!user) throw httpError(404, `No Infinite Flight user named ${name}`);
+    return user;
+  });
+}
+
+/**
+ * rows[i] = [開始 epochSec(不明は 0), サーバー, 出発, 到着, 機種, リバリー, 飛行分, うち夜間分, 着陸数, XP, 違反数, id 先頭 8 文字]
+ */
+async function getHistoryPage(username: string, page: number) {
+  const user = await resolveUser(username);
+  const userId = user.userId;
+  const [data, liveries] = await Promise.all([
+    cached(`history:${userId}:${page}`, TTL.historyPage, () =>
+      ifApiPolite<{ totalPages: number; totalCount: number; data: RawUserFlight[] }>(
+        `/users/${encodeURIComponent(userId)}/flights?page=${page}&pageSize=${HISTORY_PAGE_SIZE}`
+      )
+    ),
+    getLiveries().catch(() => new Map<string, RawLivery>())
+  ]);
+  const aircraftNames = new Map<string, string>();
+  for (const l of liveries.values()) aircraftNames.set(l.aircraftID, l.aircraftName);
+
+  return {
+    page,
+    totalPages: Math.min(data.totalPages, HISTORY_MAX_PAGES),
+    totalCount: data.totalCount,
+    profile:
+      page === 1
+        ? {
+            ifc: user.discourseUsername || username,
+            va: user.virtualOrganization || '',
+            grade: user.grade,
+            xp: user.xp,
+            flightMinutes: Math.round(user.flightTime),
+            landings: user.landingCount,
+            onlineFlights: user.onlineFlights,
+            violations: user.violations,
+            atcOperations: user.atcOperations
+          }
+        : null,
+    rows: data.data.map((f) => {
+      const livery = liveries.get(f.liveryId);
+      return [
+        Math.max(0, Math.round(Date.parse(f.created) / 1000) || 0),
+        f.server || '',
+        f.originAirport || '',
+        f.destinationAirport || '',
+        livery?.aircraftName ?? aircraftNames.get(f.aircraftId) ?? '',
+        livery?.liveryName ?? '',
+        round(f.totalTime, 1),
+        round(f.nightTime || 0, 1),
+        f.landingCount,
+        f.xp,
+        f.violations?.length ?? 0,
+        (f.id || '').slice(0, 8)
+      ];
+    })
   };
 }
 
@@ -628,6 +741,13 @@ app.get('/api/airport-flights', route(async (req, res) => {
 app.get('/api/pilot', route(async (req, res) => {
   res.set('Cache-Control', 'public, max-age=60, s-maxage=120');
   return getPilot(requireParam(req, 'sessionId'), requireParam(req, 'flightId'));
+}));
+
+app.get('/api/history', route(async (req, res) => {
+  const page = Math.max(1, Math.min(HISTORY_MAX_PAGES, Number(req.query.page) || 1));
+  const result = await getHistoryPage(requireParam(req, 'user'), page);
+  res.set('Cache-Control', 'public, max-age=300, s-maxage=600');
+  return result;
 }));
 
 app.get('/api/locate', route(async (req, res) => {

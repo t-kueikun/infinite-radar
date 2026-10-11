@@ -173,6 +173,41 @@ export async function fetchPilot(sessionId: string, flightId: string, signal?: A
   };
 }
 
+/** フライト統計用の履歴 1 便分。start が 0 のものは日時不明（古い記録） */
+export type HistoryFlight = {
+  id: string;
+  start: number;
+  server: string;
+  origin: string;
+  destination: string;
+  aircraft: string;
+  livery: string;
+  minutes: number;
+  night: number;
+  landings: number;
+  xp: number;
+  violations: number;
+};
+export type HistoryPage = { page: number; totalPages: number; totalCount: number; profile: PilotProfile | null; flights: HistoryFlight[] };
+
+type HistoryRow = [number, string, string, string, string, string, number, number, number, number, number, string];
+
+export async function fetchHistoryPage(user: string, page: number, signal?: AbortSignal): Promise<HistoryPage> {
+  const data = await getJson<Omit<HistoryPage, 'flights'> & { rows: HistoryRow[] }>(
+    `/api/history?user=${encodeURIComponent(user)}&page=${page}`,
+    signal
+  );
+  return {
+    page: data.page,
+    totalPages: data.totalPages,
+    totalCount: data.totalCount,
+    profile: data.profile,
+    flights: data.rows.map(([start, server, origin, destination, aircraft, livery, minutes, night, landings, xp, violations, id]) => ({
+      id, start, server, origin, destination, aircraft, livery, minutes, night, landings, xp, violations
+    }))
+  };
+}
+
 export type LocatedFlight = { sessionId: string; server: string; flightId: string; callsign: string };
 
 /** IFC ユーザー名から、いま飛んでいるサーバーと便を探す。 */

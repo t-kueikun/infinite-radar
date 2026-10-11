@@ -29,6 +29,7 @@ import {
 } from './data';
 import { activeCount, createMatcher, DEFAULT_FILTERS, FilterForm, loadFilters, saveFilters, type AirportFlights } from './filters';
 import { FlightPanel } from './panel';
+import { StatsView } from './stats';
 
 const POLL_MS = 10_000;
 const DETAIL_REFRESH_MS = 60_000;
@@ -55,7 +56,9 @@ const els = {
   atcPop: $('atc-pop'),
   me: $('me'),
   filterLocked: $('filter-locked'),
-  filterReset: $('filter-reset')
+  filterReset: $('filter-reset'),
+  stats: $('stats'),
+  statsBtn: $<HTMLButtonElement>('stats-btn')
 };
 
 // ---------------------------------------------------------------------------
@@ -85,7 +88,9 @@ const state = {
   worldAt: 0,
   pendingFlightFromUrl: new URL(location.href).searchParams.get('flight'),
   /** ?q=（IFSpotters の写真ページなどから「この機体を探す」で来たとき）。最初のデータが届いたら検索する */
-  pendingQuery: new URL(location.href).searchParams.get('q')
+  pendingQuery: new URL(location.href).searchParams.get('q'),
+  /** ?stats=IFC ユーザー名（フライト統計を開いた状態で共有・再読み込みできるように） */
+  pendingStats: new URL(location.href).searchParams.get('stats')
 };
 
 // ---------------------------------------------------------------------------
@@ -146,7 +151,44 @@ aheadLine.addTo(routeLayer);
 
 const panel = new FlightPanel(els.panel, {
   onClose: () => select(null),
-  onToggleFollow: () => setFollowing(!state.following)
+  onToggleFollow: () => setFollowing(!state.following),
+  onStats: (user) => openStats(user)
+});
+
+// ---------------------------------------------------------------------------
+// フライト統計（開いている間はライブの機体を隠し、飛んだ路線だけを地図に出す）
+// ---------------------------------------------------------------------------
+
+const stats = new StatsView(els.stats, map, {
+  onClose: () => closeStats(),
+  airport: (icao) => aircraft.airport(icao)
+});
+
+function openStats(user: string): void {
+  select(null);
+  closePopovers();
+  hideTooltip();
+  meMenuOpen = false;
+  renderMe();
+  aircraft.remove();
+  document.body.classList.add('stats-open');
+  stats.open(user);
+  syncUrl();
+}
+
+function closeStats(): void {
+  if (!stats.isOpen) return;
+  stats.close();
+  document.body.classList.remove('stats-open');
+  aircraft.addTo(map);
+  syncUrl();
+}
+
+els.statsBtn.addEventListener('click', () => {
+  const me = state.viewer?.ifcUsername;
+  if (!me) return;
+  if (stats.isOpen && stats.user?.toLowerCase() === me.toLowerCase()) closeStats();
+  else openStats(me);
 });
 
 // ---------------------------------------------------------------------------
@@ -276,6 +318,7 @@ function select(id: string | null, options: { fly?: boolean } = {}): void {
 
   const f = state.byId.get(id);
   if (!f) return;
+  closeStats();
   panel.open(f);
   setFollowing(false);
   if (options.fly) flyToSelected();
@@ -408,6 +451,7 @@ function drawRoute(withAirports = false): void {
 // ---------------------------------------------------------------------------
 
 map.on('click', (event: L.LeafletMouseEvent) => {
+  if (stats.isOpen) return;
   const { x, y } = event.containerPoint;
   const hit = aircraft.hitTest(x, y);
   if (hit) {
@@ -472,7 +516,7 @@ if (canHover) {
     if (hoverFrame) return;
     hoverFrame = requestAnimationFrame(() => {
       hoverFrame = 0;
-      if (!lastMouse) return;
+      if (!lastMouse || stats.isOpen) return;
       const hit = aircraft.hitTest(lastMouse.x, lastMouse.y);
       const airport = hit ? null : aircraft.hitTestAirport(lastMouse.x, lastMouse.y);
       map.getContainer().style.cursor = hit || airport ? 'pointer' : '';
@@ -715,6 +759,7 @@ function handleViewer(viewer: Viewer | null): void {
   renderMe();
   renderFilterLock();
   applyFilters();
+  els.statsBtn.hidden = !viewer?.ifcUsername;
   void locateMe();
 }
 
@@ -775,6 +820,7 @@ function renderMe(): void {
     <button type="button" class="avatar" id="me-btn" aria-expanded="${meMenuOpen}" aria-label="Account">${avatar}</button>
     <div class="me-menu" ${meMenuOpen ? '' : 'hidden'}>
       <div class="who"><b>${escapeHtml(v.displayName)}</b>${v.ifcUsername ? `<span>IFC @${escapeHtml(v.ifcUsername)}</span>` : ''}</div>
+      ${v.ifcUsername ? '<button type="button" data-action="stats">My flight stats</button>' : ''}
       <a href="${settingsUrl()}" target="_blank" rel="noopener">IFSpotters settings</a>
       <button type="button" data-action="signout">Sign out</button>
     </div>`;
@@ -802,6 +848,8 @@ els.me.addEventListener('click', async (event) => {
   } else if (target.closest('#me-btn')) {
     meMenuOpen = !meMenuOpen;
     renderMe();
+  } else if (target.closest('[data-action="stats"]') && state.viewer?.ifcUsername) {
+    openStats(state.viewer.ifcUsername);
   } else if (target.closest('[data-action="signout"]')) {
     await signOut();
     handleViewer(null);
@@ -934,6 +982,8 @@ document.addEventListener('keydown', (event) => {
     els.search.focus();
   } else if (event.key === 'Escape' && (!els.filterPop.hidden || !els.atcPop.hidden)) {
     closePopovers();
+  } else if (event.key === 'Escape' && !typing && stats.isOpen) {
+    closeStats();
   } else if (event.key === 'Escape' && !typing && state.selectedId) {
     select(null);
   }
@@ -949,6 +999,8 @@ function syncUrl(): void {
   if (name) url.searchParams.set('server', name.toLowerCase());
   if (state.selectedId) url.searchParams.set('flight', state.selectedId);
   else if (!state.pendingFlightFromUrl) url.searchParams.delete('flight');
+  if (stats.user) url.searchParams.set('stats', stats.user);
+  else url.searchParams.delete('stats');
   history.replaceState(null, '', url);
 }
 
@@ -995,11 +1047,16 @@ async function init(): Promise<void> {
 
   state.sessionId = initial.id;
   fetchAirportPins()
-    .then((airports) => aircraft.setAirports(airports))
+    .then((airports) => {
+      aircraft.setAirports(airports);
+      stats.refresh();
+    })
     .catch(() => {
       /* 空港ピンが無くても機体の表示には影響しない */
     });
   renderServers();
+  if (state.pendingStats) openStats(state.pendingStats);
+  state.pendingStats = null;
   syncUrl();
   void poll();
 

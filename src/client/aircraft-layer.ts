@@ -175,7 +175,9 @@ export class AircraftLayer extends L.Layer {
     map.off('move zoom resize viewreset moveend zoomend', this.redraw, this);
     map.off('zoomanim', this.animateZoom, this);
     this.canvas.remove();
+    // 0 に戻しておかないと、地図へ戻したときに redraw() が予約済みと見なして描かない
     cancelAnimationFrame(this.frame);
+    this.frame = 0;
     return this;
   }
 
